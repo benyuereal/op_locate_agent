@@ -245,15 +245,27 @@ def moe_router_hook_points(
     num_layers: int,
     first_moe_layer: int,
     layer_prefix: str = "model.layers",
-    router_path_tmpl: str = "{base}.mlp.experts.router",
+    router_path_tmpl: Optional[str] = None,
     sample_layers: Optional[List[int]] = None,
 ) -> List[HookPoint]:
     """
-    MoE router 专用 hook 点：抓 select_experts 的输入(router_logits)和输出(topk)。
-    用 patch 模式（CustomOp / 自定义 router 可靠口径）。
+    MoE router 专用 hook 点。
+
+    router_path_tmpl 是相对模型的 router 模块路径模板，{base} 为层前缀+层号。
+    不同架构 router 位置不同（mlp.gate / mlp.experts.router / ...），**应来自
+    model_probe 的探测结果**而非硬编码。默认 None 时回退 mlp.experts.router
+    并发警告——仅作占位，不保证对具体模型正确。
+
+    注意：pre-hook 抓的是该模块的输入，post-hook 抓的是输出。若 router 模块
+    的输出不是最终 topk（如 BailingMoeV2 的 gate 只产 logits，topk 在后续
+    逻辑里），需用 patch 模式或挂到真正产 topk 的位置——见 compare_layers.py。
 
     first_k_dense_replace 之前的层是 dense，跳过。
     """
+    if router_path_tmpl is None:
+        logger.warning("moe_router_hook_points 未传 router_path_tmpl，回退 mlp.experts.router；"
+                       "应传 model_probe 探测结果，否则可能挂错位置")
+        router_path_tmpl = "{base}.mlp.experts.router"
     layers = sample_layers if sample_layers is not None else list(range(first_moe_layer, num_layers))
     pts: List[HookPoint] = []
     for i in layers:

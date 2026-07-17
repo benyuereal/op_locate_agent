@@ -101,13 +101,15 @@ class ModelProfile:
 # 不同模型库里 MoE 字段命名差异的归一化映射
 _MOE_FIELD_ALIASES = {
     "num_experts": ["num_experts", "n_routed_experts", "num_local_experts"],
-    "num_experts_per_tok": ["num_experts_per_tok", "num_experts_per_tok", "top_k"],
+    "num_experts_per_tok": ["num_experts_per_tok", "top_k"],
     "num_expert_group": ["num_expert_group", "n_group", "num_expert_groups"],
     "topk_group": ["topk_group", "top_k_group", "num_expert_group_candidates"],
     "routed_scaling_factor": ["routed_scaling_factor", "router_scale"],
     "score_function": ["score_function", "scoring_func"],
     "num_shared_experts": ["num_shared_experts", "n_shared_experts"],
-    "first_k_dense_replace": ["first_k_dense_replace", "moe_layer_freq"],
+    # 注意：moe_layer_freq（MoE 层频率）语义不同于 first_k_dense_replace（前 N 层 dense 计数），
+    # 不作为别名，避免误用。
+    "first_k_dense_replace": ["first_k_dense_replace"],
     "moe_intermediate_size": ["moe_intermediate_size"],
     "moe_router_enable_expert_bias": ["moe_router_enable_expert_bias"],
 }

@@ -95,7 +95,7 @@ experts.forward_native(...) # 纯 PyTorch
 # compare_tensors 对比，若一致 → fused kernel 无精度问题
 ```
 
-参考脚本：`precision_compare/test_lightop_vs_torch_min.py`、`test_moe_native_l1.py`。
+参考脚本：`examples/compare_layers.py`（`--only router` + `--fix-env` 做有/无 fused_gate 对照）。
 
 ## 误差判定速查
 

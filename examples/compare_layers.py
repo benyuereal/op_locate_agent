@@ -102,29 +102,12 @@ def probe():
 # 子进程脚本：抓中间值落盘
 # ============================================================================
 
-# 探测层属性名的 helper，注入到两个子进程脚本（不同架构 attn/mlp/router 命名不同，
-# 硬编码 self_attn/mlp 在 BailingMoeV2 等模型上会失败）
+# 探测层属性名的 helper，注入到两个子进程脚本。直接复用 lib.model_probe 的别名表
+# 与探测函数，避免重复定义导致两处发散（不同架构 attn/mlp/router 命名不同）。
 _DETECT_HELPER = r'''
-_ATTN_ALIASES = ["self_attn", "attention", "attn", "self_attention"]
-_MLP_ALIASES = ["mlp", "feed_forward", "ffn"]
-_ROUTER_ALIASES = ["router", "gate", "gate_up", "router_layer"]
-
-def _has_attr(mod, path):
-    obj = mod
-    for p in path.split("."):
-        if p.isdigit():
-            obj = obj[int(p)]
-        elif hasattr(obj, p):
-            obj = getattr(obj, p)
-        else:
-            return False
-    return True
-
-def _detect_attr(layer, aliases):
-    for a in aliases:
-        if hasattr(layer, a):
-            return a
-    return None
+from lib.model_probe import (
+    _ATTN_ALIASES, _MLP_ALIASES, _ROUTER_ALIASES, _detect_attr, _detect_router,
+)
 
 def _detect_layer_attrs(model, layer_prefix="model.layers"):
     """探测真实层的 attn/mlp/router 属性名。返回 (attn_attr, mlp_attr, router_relpath)。
@@ -142,24 +125,9 @@ def _detect_layer_attrs(model, layer_prefix="model.layers"):
     router = None
     if mlp:
         for layer in layers:
-            mlp_mod = getattr(layer, mlp)
-            # router 在 mlp 下
-            for a in _ROUTER_ALIASES:
-                if hasattr(mlp_mod, a):
-                    router = f"{mlp}.{a}"; break
-            if router: break
-            # mlp.experts.router 嵌套
-            if hasattr(mlp_mod, "experts"):
-                exp = getattr(mlp_mod, "experts")
-                for a in _ROUTER_ALIASES:
-                    if hasattr(exp, a):
-                        router = f"{mlp}.experts.{a}"; break
-                if router: break
-            # router 直接在 layer 下
-            for a in _ROUTER_ALIASES:
-                if hasattr(layer, a):
-                    router = a; break
-            if router: break
+            router = _detect_router(layer, mlp)
+            if router:
+                break
     return attn, mlp, router
 '''
 
@@ -405,7 +373,6 @@ def main():
                 print(f"{name:<28} {'shape_mismatch':>10} {tuple(a.shape)} vs {tuple(b.shape)}")
                 continue
             r = compare_tensors(name, a, b, atol=args.atol)
-            v = r.verdict(atol=args.atol, cos_thresh=args.cos_thresh)
             ok = r.is_close or r.cos >= args.cos_thresh
             mark = "✅" if ok else "❌"
             print(f"{name:<28} {r.cos:>10.6f} {r.max_abs_diff:>12.4e} "

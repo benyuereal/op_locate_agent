@@ -7,7 +7,10 @@ agent 的"手"：config 解析、路径解析、hook、对比、启动、报告�
 
 from .config_loader import ModelProfile, load_model_profile
 from .path_resolver import CodePaths, KeyOp, resolve_code_paths
-from .hook_manager import HookManager, HookPoint, CaptureSpec
+from .hook_manager import (
+    HookManager, HookPoint, CaptureSpec,
+    transformer_hook_points, moe_router_hook_points,
+)
 from .tensor_compare import (
     TensorComparator,
     CompareResult,
@@ -27,6 +30,8 @@ __all__ = [
     "HookManager",
     "HookPoint",
     "CaptureSpec",
+    "transformer_hook_points",
+    "moe_router_hook_points",
     "TensorComparator",
     "CompareResult",
     "compare_topk",

@@ -91,7 +91,7 @@ reports/<model>_<date>/
 回写原因：避免错误结论污染知识库（`INVESTIGATION.md` 根因写错的前车之鉴）。
 人工 review 是质量门。
 
-## 黄金回归
+## 冒烟验证
 
-`tests/test_e2e_antangelmed.py` 用 AntAngelMed 做黄金回归。
-新模型定位前跑它确认环境；方法论变更后跑它回归。
+`examples/quickstart_antangelmed.py` 做端到端冒烟（HF vs vLLM）。
+`tests/` 下为 lib 单测；新模型定位前跑 quickstart 确认环境。

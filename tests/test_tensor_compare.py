@@ -35,6 +35,15 @@ class TestTensorCompare:
         r = compare_tensors("x", a, b)
         assert r.is_close is False
 
+    def test_single_element_std_not_nan(self):
+        """单元素张量 std 不能是 nan（曾因 unbiased std 返回 nan）"""
+        a = torch.tensor([3.0])
+        b = torch.tensor([3.0])
+        r = compare_tensors("x", a, b)
+        assert not math.isnan(r.ref_std)
+        assert not math.isnan(r.test_std)
+        assert r.ref_std == 0.0
+
 
 class TestTopkCompare:
 

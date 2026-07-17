@@ -33,7 +33,7 @@ if [ "$TP" != "$N_GPU" ]; then
 fi
 
 if [ -n "${FIX_ENV:-}" ]; then
-  export VLLM_ENABLE_MOE_FUSED_GATE="${VLLM_ENABLE_MOE_FUSED_GATE:-0}"
+  export VLLM_ENABLE_MOE_FUSED_GATE=0
   echo "[run_vllm] 已显式设 VLLM_ENABLE_MOE_FUSED_GATE=0（对照验证）"
 else
   echo "[run_vllm] 未设修复 env（排查工具默认不预设结论）"

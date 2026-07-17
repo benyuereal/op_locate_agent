@@ -132,9 +132,9 @@ class TensorComparator:
             is_close=is_close,
             shape=tuple(ref.shape),
             ref_mean=ref_f.mean().item() if diff.numel() else 0.0,
-            ref_std=ref_f.std().item() if diff.numel() else 0.0,
+            ref_std=ref_f.std(correction=0).item() if diff.numel() > 1 else 0.0,
             test_mean=test_f.mean().item() if diff.numel() else 0.0,
-            test_std=test_f.std().item() if diff.numel() else 0.0,
+            test_std=test_f.std(correction=0).item() if diff.numel() > 1 else 0.0,
         )
 
 
