@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# 报告输出（每次定位生成，不入库）
+reports/*/
+reports/*.json
+reports/*.md
+!reports/.gitkeep
+
+# 临时/证据
+evidence/
+*.log
+*.pt
+*.safetensors
+
+# 本地配置（含密钥/token，绝不入库）
+.env
+.env.local
+*.secret
+credentials*
+netrc
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db

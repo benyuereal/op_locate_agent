@@ -52,40 +52,51 @@ op_locate_agent/
 │       └── report.md            # 子流程：结论归档与索引回写
 │
 ├── lib/                         # 可复用脚本工具库（agent 的"手"）
-│   ├── config_loader.py         # 解析 config.json + auto_map 自定义 py → 标准化 ModelProfile
-│   ├── path_resolver.py         # ModelProfile → vLLM/transformers 实际代码路径
-│   ├── hook_manager.py          # 抽自 core.py：UniversalHookManager + 口径修正（pre_hook/monkey-patch）
-│   ├── tensor_compare.py        # 抽自 core.py：TensorComparator + cos/allclose/逐点
-│   ├── probe_runner.py          # 在 vLLM/HF 上跑指定输入，抓指定 hook 点
-│   ├── vllm_launcher.py         # 标准化 vLLM 启动（TP/gpu_mem/enforce_eager/环境变量）
-│   ├── hf_launcher.py           # 标准化 transformers 启动
-│   ├── op_compare.py            # 单算子级对比（如 lightop vs torch vs vllm_fused）
-│   └── report_writer.py         # 生成结构化报告 + 回写 knowledge 索引
+│   ├── __init__.py              # 统一导出
+│   ├── platform_probe.py        # Hygon DCU 硬件探测（gfx 型号/型号/HIP 版本）
+│   ├── config_loader.py         # 解析 config.json + auto_map → 标准化 ModelProfile
+│   ├── config_patch.py          # 补 model config 缺失字段（如 BailingMoeV2 MTP）
+│   ├── path_resolver.py         # ModelProfile → vLLM/transformers 实际代码路径 + key_ops
+│   ├── hook_manager.py          # HookManager + 口径修正（pre_hook/patch/owner，防 in-place 污染）
+│   ├── tensor_compare.py        # TensorComparator + topk 按 id 对齐对比
+│   ├── probe_runner.py          # (规划中) 在 vLLM/HF 上跑指定输入，抓指定 hook 点
+│   ├── op_compare.py            # (规划中) 单算子级对比（lightop vs torch vs vllm_fused）
+│   └── report_writer.py         # (规划中) 生成结构化报告 + 回写 knowledge 索引
 │
 ├── knowledge/                   # 分层 markdown 索引（agent 的"脑"）
 │   ├── README.md                # 索引使用说明
 │   ├── arch_index.md            # 架构 → vLLM 代码路径映射（按 model_type/architectures）
 │   ├── moe_known_issues.md      # MoE 已知坑（fused_gate / grouped_topk / aiter / lightop）
+│   ├── model_config_issues.md   # 模型 config 缺失字段坑（BailingMoeV2 MTP 等）
 │   ├── vllm_forward_paths.md    # vLLM 前向核心路径速查（按模型族）
 │   ├── hook_pitfalls.md         # hook 抓取口径陷阱（in-place 污染 / collective_rpc / CustomOp）
 │   └── platforms/               # 平台相关（Hygon DCU 家族 / cuda 等）
 │       └── hygon_dcu.md
 │
-├── run/                         # 标准启动指令
-│   ├── run_vllm.sh              # 标准化 vLLM serve/离线推理
-│   ├── run_hf.sh                # 标准化 transformers 推理
-│   └── run_locate.sh            # 一键定位入口（调用 skill）
+├── examples/                    # 完整启动例子（门面）
+│   └── quickstart_antangelmed.py # 端到端 vLLM+HF 启动对比，clone 后第一个跑
 │
-├── reports/                     # 每次定位的结构化报告（按模型+日期）
+├── run/                         # 标准启动脚本（卡用 HIP_VISIBLE_DEVICES 前置指定）
+│   ├── run_vllm.sh              # 标准化 vLLM 离线推理
+│   └── run_hf.sh                # 标准化 transformers 推理
+│
+├── reports/                     # 每次定位的结构化报告（按模型+日期，.gitignore）
 │   └── <model>_<date>/
 │       ├── report.md            # 人读结论
 │       ├── evidence/            # 抓到的中间态、对比日志
 │       └── verdict.json         # 机读结论（bug 算子、修复方法、置信度）
 │
+├── docs/
+│   └── SECURITY.md              # 凭证安全（密码/token 绝不入库）
+│
 └── tests/                       # lib/ 的单元测试 + 端到端回归
+    ├── conftest.py
     ├── test_config_loader.py
+    ├── test_path_resolver.py
     ├── test_hook_manager.py
-    └── test_e2e_antangelmed.py  # 用 AntAngelMed 做黄金回归用例
+    ├── test_tensor_compare.py
+    ├── test_platform_probe.py
+    └── test_e2e_antangelmed.py  # (规划中) AntAngelMed 黄金回归
 ```
 
 ---

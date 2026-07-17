@@ -7,8 +7,36 @@
 
 ### 前提
 - vLLM + transformers + torch 已装（本机 vLLM 0.15.1, torch 2.9.0）
-- 有空闲 GPU/DCU 卡（gfx936 上避开在线服务占用的 0,1,6,7，用 2/3/7）
 - 模型本地目录含 config.json
+- **卡由用户用 `HIP_VISIBLE_DEVICES` 前置指定**，脚本不自动判定（避免误占在线服务）
+
+## 快速验证（完整 vLLM + HF 启动例子）
+
+最快的方式——端到端跑 vLLM + HF 并对比输出：
+
+```bash
+cd op_locate_agent
+
+# 4 卡（vLLM TP=4 + HF device_map 4 卡）
+HIP_VISIBLE_DEVICES=0,1,6,7 python3 examples/quickstart_antangelmed.py
+
+# 单卡（小模型）
+HIP_VISIBLE_DEVICES=2 python3 examples/quickstart_antangelmed.py
+
+# 只跑某一边
+HIP_VISIBLE_DEVICES=2,3,4,5 python3 examples/quickstart_antangelmed.py --skip-vllm
+HIP_VISIBLE_DEVICES=2 python3 examples/quickstart_antangelmed.py --skip-hf
+```
+
+预期（AntAngelMed on gfx936）：HF 输出正常中文，vLLM 带 `VLLM_ENABLE_MOE_FUSED_GATE=0` 也输出正常中文，两者一致 → ✅。
+
+单独跑启动脚本：
+```bash
+HIP_VISIBLE_DEVICES=0,1,6,7 TP=4 ./run/run_vllm.sh /models/AntAngelMed
+HIP_VISIBLE_DEVICES=2,3,4,5 ./run/run_hf.sh /models/AntAngelMed
+```
+
+## 使用 agent 定位
 
 ### 方式 A：Claude Code 交互式
 

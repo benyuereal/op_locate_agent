@@ -1,0 +1,16 @@
+# op_locate_agent 运行依赖
+# 核心工具库（lib）零框架依赖：只需 torch + transformers + safetensors
+# vLLM 在定位目标环境里已装；此处列出便于新环境复现
+
+torch>=2.0
+transformers>=4.40
+safetensors>=0.4
+
+# vLLM（定位对象，版本取决于目标环境）
+# vllm>=0.15
+
+# 测试
+pytest>=7.0
+
+# 知识库/报告用（可选）
+# pydantic>=2.0   # lib 当前未强依赖，留作未来结构化扩展

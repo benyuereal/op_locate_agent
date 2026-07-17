@@ -43,15 +43,15 @@ allowed-tools: Bash, Read, Write, Edit, Glob, Grep, WebFetch
 
 1. 探测平台：
    ```python
-   from lib import probe_platform, recommended_idle_gpu
+   from lib import probe_platform
    info = probe_platform()
    print(info.summary())   # 如 "Hygon DCU BW100 (gfx936), HIP 6.3.26113, 8 devices, is_cuda=False"
-   gpu = recommended_idle_gpu(info)   # 避开在线服务占用卡
    ```
 2. 若 `info.is_dcu`：Read `knowledge/platforms/hygon_dcu.md`。
    - 注意 gfx936 与 gfx938 是不同架构，kernel/aiter 兼容性可能不同，不要假设。
    - 记住 `is_cuda()=False` 会改变 vLLM 调度（见 hygon_dcu.md）。
-3. 选定空闲卡，后续脚本统一用 `HIP_VISIBLE_DEVICES=<gpu>`。
+3. **卡由用户指定**：所有启动命令用 `HIP_VISIBLE_DEVICES=<ids>` 前置指定卡。
+   **不要自动选卡**——避免误占在线服务。问用户用哪几张卡，或确认用户已设好该环境变量。
 4. **重要心态**：历史案例（AntAngelMed 的 fused_gate bug）只是**一个案例**，
    不代表当前问题也是它。每个案例独立用运行时探针定位，不要预判根因。
 
