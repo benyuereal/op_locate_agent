@@ -178,16 +178,19 @@ def _infer_key_ops(profile: ModelProfile, vllm_root: str) -> List[KeyOp]:
 
     # MoE router 相关
     # sigmoid + bias → fused_gate 路径
+    # 注意：这里只标注"该算子在此条件下会被调用"这一结构性事实，
+    # 不预置任何具体 bug 结论。具体已知问题查 knowledge/moe_known_issues.md，
+    # 由 agent 在运行时用探针验证，避免先入为主。
     if profile.score_function == "sigmoid" and profile.e_score_correction_bias:
         ops.append(KeyOp(
             name="ops.moe_fused_gate",
             file=os.path.relpath(custom_ops, vllm_root),
             trigger_condition=(
-                "use_fused_gate=True (VLLM_ENABLE_MOE_FUSED_GATE=1 且 "
+                "use_fused_gate=True (VLLM_ENABLE_MOE_FUSED_GATE 默认1 且 "
                 "e_score_correction_bias≠None 且 num_expert_group≠None)"
             ),
-            known_issue="gfx936 上选错专家 → 输出全 NULL(token 188)。详见 knowledge/moe_known_issues.md",
-            fix="VLLM_ENABLE_MOE_FUSED_GATE=0 走 Python grouped_topk",
+            known_issue=None,   # 不预置；查 knowledge/moe_known_issues.md
+            fix=None,
         ))
         ops.append(KeyOp(
             name="GroupedTopKRouter.select_experts / _compute_routing",
@@ -256,7 +259,7 @@ def resolve_code_paths(profile: ModelProfile) -> CodePaths:
 if __name__ == "__main__":
     import sys
     from .config_loader import load_model_profile
-    path = sys.argv[1] if len(sys.argv) > 1 else "/models/AntAngelMed"
+    path = sys.argv[1] if len(sys.argv) > 1 else "/path/to/model"
     profile = load_model_profile(path)
     cp = resolve_code_paths(profile)
     print("=== CodePaths ===")

@@ -159,7 +159,7 @@ def compare_topk(
     对比两组 topk 结果。
 
     关键：权重对比必须"按 expert id 对齐"，而不是各自 sorted 后逐位比——
-    否则顺序差异会产生假误差（AntAngelMed lightop vs torch 调查中的教训）。
+    否则顺序差异会产生假误差（曾见于某 topk 权重对比排查）。
 
     Args:
         ref_ids / test_ids: (n, topk) int, 专家 id

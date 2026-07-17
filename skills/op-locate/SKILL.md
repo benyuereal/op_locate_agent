@@ -17,7 +17,7 @@ allowed-tools: Bash, Read, Write, Edit, Glob, Grep, WebFetch
 
 ## 输入
 
-- **必需**：模型本地路径（含 config.json），如 `/models/AntAngelMed`
+- **必需**：模型本地路径（含 config.json），如 `/path/to/model`
 - **可选**：modelscope / huggingface URL（用 WebFetch 拉官方 model card 补充背景）
 - **可选**：测试 prompt（默认用 `"你好，我是一名医生"`，4-8 token）
 
@@ -52,14 +52,14 @@ allowed-tools: Bash, Read, Write, Edit, Glob, Grep, WebFetch
    - 记住 `is_cuda()=False` 会改变 vLLM 调度（见 hygon_dcu.md）。
 3. **卡由用户指定**：所有启动命令用 `HIP_VISIBLE_DEVICES=<ids>` 前置指定卡。
    **不要自动选卡**——避免误占在线服务。问用户用哪几张卡，或确认用户已设好该环境变量。
-4. **重要心态**：历史案例（AntAngelMed 的 fused_gate bug）只是**一个案例**，
-   不代表当前问题也是它。每个案例独立用运行时探针定位，不要预判根因。
+4. **重要心态**：知识库里的历史案例只是**个例**，不代表当前问题也是它。
+   每个案例独立用运行时探针定位，不要预判根因。
 
 ### 阶段 1：解析模型配置
 
 ```python
 from lib import load_model_profile
-profile = load_model_profile("/models/AntAngelMed")
+profile = load_model_profile("/path/to/model")
 print(profile.moe_summary())
 ```
 
@@ -77,7 +77,10 @@ for k in cp.key_ops:
 读 `knowledge/arch_index.md` 确认 vLLM 模型文件。
 读 `knowledge/vllm_forward_paths.md` 规划 hook 点。
 
-**关键判定**：若 `key_ops` 含 `ops.moe_fused_gate` 且平台是 gfx936 → **先读 `knowledge/moe_known_issues.md` 的 fused_gate 条目**，这是已知坑，可能直接命中。
+**关键判定**：若 `key_ops` 含 `ops.moe_fused_gate`，说明模型走了 fused_gate 路径——
+**这只是结构性事实，不预设是否有问题**。可读 `knowledge/moe_known_issues.md` 的
+fused_gate 条目了解**是否有已记录案例**，但必须用运行时探针独立验证，不要因"长得像"
+就直接套用历史结论。
 
 ### 阶段 3：获取官方背景（可选）
 

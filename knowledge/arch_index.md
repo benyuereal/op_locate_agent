@@ -7,9 +7,9 @@
 
 | model_type | architectures | vLLM 文件 | MoE | 备注 |
 |---|---|---|---|---|
-| `bailing_moe_v2` | `BailingMoeV2ForCausalLM` | `models/bailing_moe.py` | ✅ | sigmoid+bias → 见 fused_gate 坑 |
+| `bailing_moe_v2` | `BailingMoeV2ForCausalLM` | `models/bailing_moe.py` | ✅ | sigmoid+bias，走 fused_gate 路径（见 moe_known_issues.md） |
 | `bailing_moe` | `BailingMoeForCausalLM` | `models/bailing_moe.py` | ✅ | 同上 |
-| `deepseek_v2` | `DeepseekV2ForCausalLM` | `models/deepseek_v2.py` | ✅ | softmax 路径，无 fused_gate 坑 |
+| `deepseek_v2` | `DeepseekV2ForCausalLM` | `models/deepseek_v2.py` | ✅ | softmax 路径 |
 | `deepseek_v3` | `DeepseekV3ForCausalLM` | `models/deepseek_v3.py` | ✅ | |
 | `qwen2_moe` | `Qwen2MoeForCausalLM` | `models/qwen2_moe.py` | ✅ | |
 | `qwen3_moe` | `Qwen3MoeForCausalLM` | `models/qwen3_moe.py` | ✅ | |
@@ -32,18 +32,19 @@ vLLM 所有 MoE 模型共用同一套 fused_moe 底座，路径稳定：
 | Router 目录 | `model_executor/layers/fused_moe/router/` | 各类 router |
 | GroupedTopk Router | `router/grouped_topk_router.py` | sigmoid+bias 路径分发在此（343 行） |
 | Python grouped_topk | `fused_moe/cpu_fused_moe.py` | 纯 PyTorch 参考实现（正确） |
-| fused gate 算子 | `_custom_ops.py:3049` | `ops.moe_fused_gate`（gfx936 有坑） |
+| fused gate 算子 | `_custom_ops.py` | `ops.moe_fused_gate`（fused 实现；已知案例见 moe_known_issues.md） |
 | aiter fused MoE | `fused_moe/rocm_aiter_fused_moe.py` | ROCm aiter 加速（本机未启用） |
 
-## 判定规则：何时查 fused_gate 坑
+## 判定规则：何时会走 fused_gate 路径
 
-满足以下**全部**条件时，`ops.moe_fused_gate` 会被调用，需查 `moe_known_issues.md`：
+满足以下**全部**条件时，`ops.moe_fused_gate` 会被调用（这是结构性事实，不预设是否有问题）：
 
 1. `profile.is_moe == True`
 2. `profile.score_function == "sigmoid"`
 3. `profile.e_score_correction_bias is not None`（有 expert bias 机制）
 4. `profile.num_expert_group is not None`（grouped topk）
-5. 平台 `is_cuda()=False`（gfx936/DCU）
-6. 未设 `VLLM_ENABLE_MOE_FUSED_GATE=0`
+5. 未设 `VLLM_ENABLE_MOE_FUSED_GATE=0`
 
-`lib/path_resolver.py:_infer_key_ops` 已自动据此推断 `ops.moe_fused_gate` 入口。
+> 满足条件只意味着"走了 fused 路径"，**不等于有问题**。
+> 是否有已知案例查 `moe_known_issues.md`，是否有问题用运行时探针验证。
+> `lib/path_resolver.py:_infer_key_ops` 据此列出该算子入口（不带 bug 结论）。

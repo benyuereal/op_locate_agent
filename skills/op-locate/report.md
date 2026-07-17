@@ -60,25 +60,21 @@ reports/<model>_<date>/
 
 ```json
 {
-  "model": "AntAngelMed",
-  "arch": "BailingMoeV2ForCausalLM",
-  "date": "2026-07-17",
-  "platform": "gfx936",
-  "vllm_version": "0.15.1",
-  "symptom": "输出全 NULL (token 188)",
-  "bug_operator": "ops.moe_fused_gate",
-  "bug_file": "vllm/_custom_ops.py:3049",
-  "root_cause": "fused gate kernel 在 gfx936 + sigmoid+bias + grouped topk 下选错专家",
-  "fix": "VLLM_ENABLE_MOE_FUSED_GATE=0",
-  "fix_verified": true,
-  "fix_tradeoff": "Python grouped_topk 比 fused 慢",
-  "confidence": "high",
-  "evidence_dir": "reports/antangelmed_20260717/evidence",
-  "falsified_hypotheses": [
-    "gfx936 MoE 配置缺失导致精度问题",
-    "fused FFN kernel bf16 累加错误",
-    "routed_scaling_factor 重复相乘"
-  ]
+  "model": "<模型名>",
+  "arch": "<architectures[0]>",
+  "date": "<YYYYMMDD>",
+  "platform": "<gfxXXX / cuda / ...>",
+  "vllm_version": "<x.y.z>",
+  "symptom": "<输出异常描述>",
+  "bug_operator": "<定位到的算子，如 ops.xxx；未定位则 null>",
+  "bug_file": "<相对 vllm 包的路径:行号>",
+  "root_cause": "<基于运行时探针的根因描述>",
+  "fix": "<修复方法；未修复则 null>",
+  "fix_verified": <true|false>,
+  "fix_tradeoff": "<修复代价，如更慢；无则空字符串>",
+  "confidence": "<high|medium|low>",
+  "evidence_dir": "reports/<model>_<date>/evidence",
+  "falsified_hypotheses": ["<排查过并被证伪的假设>"]
 }
 ```
 

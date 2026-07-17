@@ -48,7 +48,6 @@ vLLM v1 的 EngineCore 是子进程，要在 worker 上抓，需用 `collective_
 **关键**：抓取结果存 `worker.model_runner.model._captured_intermediates`（owner 机制），不要用模块级变量。
 
 简化方案（调试用）：用 `LLM` 离线推理 + `enforce_eager=True`，直接在主进程的 model 上挂 hook。
-（AntAngelMed 调查用的就是这套，见 `precision_compare/test_stage_compare.py`。）
 
 ## TP 多卡口径
 

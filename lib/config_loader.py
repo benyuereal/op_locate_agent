@@ -301,7 +301,7 @@ def _read_readme(model_path: str, chars: int) -> tuple[Optional[str], Optional[s
 
 if __name__ == "__main__":
     import sys
-    path = sys.argv[1] if len(sys.argv) > 1 else "/models/AntAngelMed"
+    path = sys.argv[1] if len(sys.argv) > 1 else "/path/to/model"
     p = load_model_profile(path)
     print("=== ModelProfile ===")
     print(f"arch        : {p.arch}")

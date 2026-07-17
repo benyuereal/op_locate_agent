@@ -1,100 +1,98 @@
 # MoE Known Issues — MoE 已知坑库
 
-> MoE 模型在 vLLM 上的已知算子问题。按"算子"组织，每条带验证来源。
-> **重要**：根因以运行时探针为准，不以代码静态分析为准（静态分析曾导致误判）。
+> MoE 模型在 vLLM 上的**已记录案例**库。按"算子"组织，每条带验证来源。
+>
+> **重要心态**：这里的每一条都是**某个具体模型在某个具体环境下的已确认案例**，
+> 不是普适结论。新模型/新环境可能复现，也可能不复现——必须用运行时探针独立验证，
+> 不要因为"长得像"就直接套用。根因以运行时探针为准，不以代码静态分析为准。
 
 ---
 
-## ops.moe_fused_gate（fused gate kernel）— 已确认
+## ops.moe_fused_gate（fused gate kernel）
 
-- **文件**: `vllm/_custom_ops.py:3049` → `torch.ops._moe_C.moe_fused_gate`
+- **文件**: `vllm/_custom_ops.py` → `torch.ops._moe_C.moe_fused_gate`
 - **触发条件**: `use_fused_gate=True`
-  - 定义于 `fused_moe/layer.py:603`：
-    `self.use_fused_gate = envs.VLLM_ENABLE_MOE_FUSED_GATE and e_score_correction_bias is not None and num_expert_group is not None`
-  - 分发于 `fused_moe/router/grouped_topk_router.py:343-356`：
+  - 定义于 `fused_moe/layer.py`：
+    `use_fused_gate = VLLM_ENABLE_MOE_FUSED_GATE and e_score_correction_bias is not None and num_expert_group is not None`
+  - 分发于 `fused_moe/router/grouped_topk_router.py`：
     ```python
     if self.use_fused_gate:
         if envs.VLLM_USE_LIGHTOP:
             ... lightop.op.moe_fused_gate ...
         else:
-            topk_weights, topk_ids = ops.moe_fused_gate(...)  # ← bug 路径
+            topk_weights, topk_ids = ops.moe_fused_gate(...)
     else:
-        topk_weights, topk_ids = grouped_topk_impl(...)       # ← 正确路径
+        topk_weights, topk_ids = grouped_topk_impl(...)
     ```
   - `VLLM_ENABLE_MOE_FUSED_GATE` 实际默认 **True**
-    （`envs.py:1794` 的 lambda `os.getenv(..., "1")` 覆盖了 `envs.py:279` 声明的 `False`）
-- **平台**: gfx936 (Hygon DCU, `is_cuda()=False`)
-- **症状**: vLLM 输出全 NULL（token id 188 = `\x00`）。MoE 选错专家（与 HF 0/32 匹配）→ routed_sum cos=0.126 → 逐层放大 → 全 NULL。
-- **根因**: `ops.moe_fused_gate` 这个 C++/HIP fused gate kernel 在 gfx936 上、针对 `n_group=8, topk_group=4, sigmoid+expert_bias` 选出的专家与正确实现不一致。
-- **修复**: `VLLM_ENABLE_MOE_FUSED_GATE=0` → `use_fused_gate=False` → 走 Python `grouped_topk`。验证输出正常连贯中文，NULL 消失。
-- **代价**: Python `grouped_topk` 比 fused 慢。以正确性换速度。
-- **验证**: AntAngelMed (BailingMoeV2), 2026-07-17, `precision_compare/`（probe_envvar.py 端到端验证）
-- **状态**: 已确认
+    （envs 里 lambda `os.getenv(..., "1")` 覆盖了声明的 False）
+- **通用排查要点**：此算子是 fused 实现，与 Python `grouped_topk` 是两条不同代码路径。
+  若怀疑路由错误，对比这两条路径的输出（用 `compare_topk` 按 id 对齐）。
+  绕过手段：`VLLM_ENABLE_MOE_FUSED_GATE=0` 走 Python 路径（正确性参考，但更慢）。
+- **已记录案例**：
+  - 模型 BailingMoeV2，平台 gfx936：fused_gate 选错专家（与 HF 0/32 匹配）→
+    输出全 NULL。绕过 `VLLM_ENABLE_MOE_FUSED_GATE=0` 后正常。
+    验证来源：reports/antangelmed_20260717（待迁入），2026-07-17，状态 已确认。
+  - **不代表**所有 sigmoid+bias 模型在所有平台上都有此问题。
 
 ### 易混淆点：ops.grouped_topk ≠ ops.moe_fused_gate
 
-> **历史误判**：早期调查记录（`INVESTIGATION.md` 第 6 节）把根因记为 `ops.grouped_topk`。
-> 运行时探针证伪：本机 `is_cuda()=False`，`grouped_topk` 的 fused 分支
-> （`grouped_topk_router.py:82` 的 `if ... current_platform.is_cuda() ...`）**根本不进入**，
-> 所以 `ops.grouped_topk` 从未被调用。真正执行的是 `ops.moe_fused_gate`（经 `use_fused_gate=True`）。
+> 这两个算子容易混淆。判定到底走了哪条路径，**必须看运行时**而非静态读代码：
+> - `ops.grouped_topk` 受 `current_platform.is_cuda()` 守卫，非 CUDA 平台**不进入** fused 分支。
+> - `ops.moe_fused_gate` 经 `use_fused_gate=True` 触发，与 is_cuda 无关。
 >
-> **教训**：根因必须用运行时探针确认，不能只看代码静态路径。
+> 历史教训：曾据静态分析误判根因为 `ops.grouped_topk`，运行时探针才发现该算子
+> 在非 CUDA 平台根本没被调用，真正执行的是 `ops.moe_fused_gate`。
+> **根因必须用运行时探针确认。**
 
 ---
 
-## lightop.op.moe_fused_gate（lightop 高性能算子）— 不建议
+## lightop.op.moe_fused_gate（lightop 高性能算子）
 
 - **文件**: `lightop.op.moe_fused_gate(router_logits, bias, num_expert_group, topk_group, topk, n_share_experts_fusion, routed_scaling_factor)`
-- **触发条件**: `use_fused_gate=True AND VLLM_USE_LIGHTOP=1`（见上面分发代码的 344 行分支）
-- **平台**: gfx936
-- **症状**: **不会** NULL（选专家正确），但权重与 torch 路径不一致。
-- **根因**: lightop 选出的专家 ids 与 torch 100% 一致，但分配的**路由权重不同**
-  （max_abs_diff≈0.294，max_rel_diff≈60%）。疑为归一化/缩放步骤公式差异
-  （bias 是否参与归一化分母、×2.5 的顺序）。
-- **影响**: 权重差 60% → MoE 加权输出偏 → 与 transformers 精度对不齐。**不会崩，但精度不达标**。
-- **修复**: 无。不建议启用 `VLLM_USE_LIGHTOP`。若要速度且精度达标，需查清 lightop 归一化公式差异并修复。
-- **验证**: AntAngelMed, 2026-07-17, `precision_compare/test_lightop_vs_torch_min.py`
-  - ids 行精确匹配 100% (64/64)
-  - weights 按id对齐: max_abs=2.943e-01, max_rel=6.000e-01, cos=1.000000
-- **状态**: 已确认（选专家正确，权重有真实数值差）
+- **触发条件**: `use_fused_gate=True AND VLLM_USE_LIGHTOP=1`
+- **通用排查要点**：lightop 是 fused_gate 的另一实现。若启用，需验证其输出（ids 与 weights）
+  是否与 Python 参考路径一致。权重对比**必须按 expert id 对齐**（见下"教训"）。
+- **已记录案例**：
+  - 模型 BailingMoeV2，平台 gfx936：ids 与 torch 100% 一致，但权重不同
+    （max_abs≈0.29，max_rel≈60%），疑为归一化/缩放公式差异。不会 NULL，但精度不齐。
+    验证来源：reports/antangelmed_20260717，状态 已确认（选专家正确，权重有真实数值差）。
+  - **不代表**所有模型/平台上 lightop 都有此差异。
 
 ### 教训：topk 权重对比必须"按 id 对齐"
 
 对比两组 topk 权重时，不能各自 sorted 后逐位比——顺序差异会产生假误差。
-必须按 expert id 对齐（且处理重复 id 用 multiset + 贪心配对）。
-此逻辑已固化在 `lib/tensor_compare.py:compare_topk`。
+必须按 expert id 对齐，且处理重复 id 用 multiset + 贪心配对。
+此逻辑已固化在 `lib/tensor_compare.py:compare_topk`。这是**通用规则**，不限模型。
 
 ---
 
-## aiter fused MoE（rocm_aiter）— 未启用
+## aiter fused MoE（rocm_aiter）
 
-- **文件**: `fused_moe/router/grouped_topk_router.py:226,331`；`rocm_aiter_fused_moe.py`
-- **触发条件**: `rocm_aiter_ops.is_fused_moe_enabled()=True` 时走 aiter 路径
-- **平台**: gfx936
-- **现状**: 本机 `is_fused_moe_enabled()=False`，故 `grouped_topk_impl = grouped_topk`（Python），不走 aiter。
-- **影响**: 无（未启用）。但意味着 aiter 加速路径在本环境不可用。
-- **未深挖**: 为什么 `is_fused_moe_enabled()=False`（aiter 未正确初始化？DCU 兼容？）
-- **状态**: 观察（非问题，是现状）
-
----
-
-## fused vs native MoE 专家 FFN — 已证伪
-
-- **文件**: `fused_moe/layer.py`（`forward_cuda` = fused Triton/HIP kernel，`forward_native` = 纯 PyTorch）
-- **触发条件**: 专家 FFN 计算路径选择
-- **假设**: gfx936 MoE 配置缺失（`E=256,N=256,device_name=gfx936_64cu_nn.json` not found）导致 fused kernel 精度问题
-- **验证**: fused vs native 结果一字不差（cos=1.000001, max_diff=0.000），但都和 HF 差 0.63。
-- **结论**: **假设证伪**。问题不在 fused FFN kernel 的精度/配置，配置缺失只是性能警告。
-- **验证**: AntAngelMed, 2026-07-17, `precision_compare/test_moe_native_l1.py`
-- **状态**: 已证伪
+- **文件**: `fused_moe/router/grouped_topk_router.py`；`fused_moe/rocm_aiter_fused_moe.py`
+- **触发条件**: `rocm_aiter_ops.is_fused_moe_enabled()=True`
+- **通用排查要点**：启用时 router 走 aiter 路径而非 Python `grouped_topk`。
+  排查前先确认 `is_fused_moe_enabled()` 的值，才知道实际走了哪条路径。
+- **已记录案例**：某 gfx936 环境下 `is_fused_moe_enabled()=False`（aiter 未启用）。
+  非问题，是现状。其他环境/其他 gfx 可能不同。
 
 ---
 
-## routed_scaling_factor 重复相乘 — 已证伪（次要问题）
+## fused vs native MoE 专家 FFN
 
-- **文件**: vLLM `GroupedTopKRouter.select_experts` 内部已把 `routed_scaling_factor` 乘进 topk_weights；`BailingMoE.forward` 外层又乘一次
-- **假设**: 2.5×2.5=6.25 倍 bug 是 0.63 误差主因
-- **验证**: 去掉外层 scaling，cos 仅 0.630→0.667，NULL 仍在。
-- **结论**: **假设证伪**（不是主因）。重复相乘确实是个问题，但不是 0.63 主因。
-- **验证**: AntAngelMed, 2026-07-17, `precision_compare/test_fix_scaling.py`
-- **状态**: 已证伪（次要）
+- **文件**: `fused_moe/layer.py`（`forward_cuda`=fused kernel，`forward_native`=纯 PyTorch）
+- **通用排查要点**：怀疑 fused FFN kernel 精度问题时，对比 fused vs native 输出。
+  若两者一致但都与参考实现有差 → 问题不在 fused FFN 精度，而在算法/路由层。
+  vLLM 启动若报 MoE 配置文件缺失（如 `E=..,N=..,device_name=xxx.json not found`），
+  通常只是**性能警告**，不影响正确性——但需用 fused vs native 对比证实。
+- **已记录案例**：模型 BailingMoeV2，gfx936：fused vs native 一字不差，但都与 HF 差 0.63
+  → 证伪"fused FFN 精度问题"假设，根因在路由层。状态 已证伪。
+
+---
+
+## routed_scaling_factor 重复相乘
+
+- **通用排查要点**：部分模型 vLLM router 内部已把 `routed_scaling_factor` 乘进 topk_weights，
+  若模型 forward 外层又乘一次，会重复。检查 vLLM 模型文件与 HF modeling 的 scaling 逻辑。
+- **已记录案例**：模型 BailingMoeV2：去掉外层 scaling 后 cos 仅 0.630→0.667，
+  不是主因。状态 已证伪（次要）。

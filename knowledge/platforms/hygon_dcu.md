@@ -7,7 +7,7 @@
 
 | 型号 (Marketing Name) | gfx 架构 | 说明 |
 |---|---|---|
-| BW100 | gfx936 | 当前 AntAngelMed 调查所用机型 |
+| BW100 | gfx936 | |
 | BW150 | gfx936 | |
 | BW1000 | gfx936 | |
 | K100AI | gfx938 | |
@@ -69,7 +69,7 @@ vLLM 多处用 `current_platform.is_cuda()` 做平台守卫。DCU 上 `is_cuda()
 - **device name**: 仍是 `"cuda"`
 - 多卡环境注意避开在线服务占用的卡。本 BW100 机器有 8 卡，在线服务常占 0,1,6,7；空闲 2,3 可调试。
 
-## aiter 状态（gfx936 / BW100 实测）
+## aiter 状态
 
 - `rocm_aiter_ops.is_fused_moe_enabled() = False`
 - aiter fused MoE 加速路径**未启用**，router 走 Python `grouped_topk`。
@@ -82,25 +82,26 @@ vLLM 启动警告（BW100 示例）：
 Using default MoE config. Config file not found at
 .../fused_moe/configs/E=256,N=256,device_name=gfx936_64cu_nn.json
 ```
-- **影响**: 仅性能（fused kernel 用默认配置），**不影响正确性**。
-- AntAngelMed 调查中一度怀疑此为精度问题根因，**已证伪**（fused vs native 结果一致）。
-- gfx938 机型配置文件名不同，但同理：缺失只影响性能。
+- **影响**: 仅性能（fused kernel 用默认配置），**通常不影响正确性**。
+  若怀疑影响精度，用 fused vs native 对比证实（见 moe_known_issues.md）。
+- gfx938 机型配置文件名不同，但同理：缺失通常只影响性能。
 
 ## 推荐调试环境变量
 
 | 变量 | 值 | 作用 |
 |---|---|---|
-| `HIP_VISIBLE_DEVICES` | `2` 或 `3` | 选空闲卡，避免抢在线服务 |
-| `VLLM_ENABLE_MOE_FUSED_GATE` | `0` | **绕过 fused_gate bug**（gfx936 MoE sigmoid+bias 用）；正确但慢 |
+| `HIP_VISIBLE_DEVICES` | 由用户指定 | 选空闲卡（用户负责确认，脚本不自动判定） |
+| `VLLM_ENABLE_MOE_FUSED_GATE` | `0` | 绕过 fused_gate 走 Python grouped_topk（调试/对照用）；正确性参考，但更慢 |
 | `enforce_eager` | True | 禁用 CUDA graph，便于 hook |
 | `gpu_memory_utilization` | 0.9 | 调试时适当调低 |
 
-> **注意**: `VLLM_ENABLE_MOE_FUSED_GATE=0` 是当前已验证的 gfx936 正确性修复，代价是速度。
-> gfx938 机型上 fused_gate 是否有同样 bug **未验证**——不能假设，需单独探测。
+> **注意**: `VLLM_ENABLE_MOE_FUSED_GATE=0` 是"切换到 Python 参考路径"的开关，
+> 用于排查对照，**不是 gfx936 的通用正确性补丁**。某案例中它修复了输出，
+> 但这不意味着所有模型/所有 gfx 都该设它。是否有问题须独立验证。
 
 ## 重要：不要把单一案例当普适
 
-> AntAngelMed (BailingMoeV2) 在 gfx936 上的 `ops.moe_fused_gate` 选错专家问题，
-> 是**一个具体案例**，不代表其他模型/其他场景/其他 gfx 都是这个问题。
+> 知识库里记录的任何具体案例（如某模型在某 gfx 上的某算子问题）都是**个例**，
+> 不代表其他模型/其他场景/其他 gfx 都是同一个问题。
 > 精度问题的根因可能是：router 算子、attention、norm、量化、dtype 转换、
 > 模型加载、tokenizer……每个案例都要独立用运行时探针定位，不要预判。

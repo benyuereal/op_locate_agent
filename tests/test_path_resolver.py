@@ -38,13 +38,16 @@ class TestPathResolver:
         names = [k.name for k in code_paths.key_ops]
         assert "ops.moe_fused_gate" in names
 
-    def test_fused_gate_has_known_issue_and_fix(self, code_paths):
-        """已知问题与修复方法必须带上（来自 AntAngelMed 实战）"""
+    def test_fused_gate_op_is_structural(self, code_paths):
+        """path_resolver 对 fused_gate 只标注结构性事实（算子+触发条件），
+        不预置具体 bug 结论——避免对任意 sigmoid+bias 模型先入为主。
+        具体 known_issue/fix 由知识库提供，运行时探针验证。"""
         op = next(k for k in code_paths.key_ops if k.name == "ops.moe_fused_gate")
-        assert op.known_issue is not None
-        assert "NULL" in op.known_issue or "选错专家" in op.known_issue
-        assert op.fix is not None
-        assert "VLLM_ENABLE_MOE_FUSED_GATE=0" in op.fix
+        assert op.trigger_condition is not None
+        assert "use_fused_gate" in op.trigger_condition
+        # 结构性推断不应硬编码具体 bug 结论
+        assert op.known_issue is None
+        assert op.fix is None
 
     def test_key_ops_includes_moe_forward(self, code_paths):
         names = [k.name for k in code_paths.key_ops]

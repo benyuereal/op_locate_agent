@@ -35,14 +35,14 @@ for s in stages:
         # 不要 break——继续看衰减曲线，但根因在 first_diff
 ```
 
-AntAngelMed 实测曲线（参考基准）：
+示例曲线（仅示意形态，不代表任何具体模型）：
 ```
 embedding     cos=0.999999  ✅
-layer0_in     cos=0.999999  ✅  (L0 dense)
-layer1_in     cos=0.940     ← L1 (第一个 MoE) 开始偏
+layer0_in     cos=0.999999  ✅
+layer1_in     cos=0.940     ← 某层开始偏
 layer8_in     cos=0.011     💀 发散
 ```
-→ 误差从第一个 MoE 层开始，逐层放大。
+→ 找到 cos 首次掉的那一层，误差通常从那里开始逐层放大。
 
 ## topk 对比（MoE router 专用）
 
@@ -74,7 +74,7 @@ for op in ops_in_layer:
     print(r.verdict())
 ```
 
-AntAngelMed 实测：A-D 全 cos≈1.0，**E (mlp) cos=0.63 唯一发散** → 根因在 MoE。
+典型情形：A-D 全 cos≈1.0，**E (mlp) 唯一发散** → 矛头指向 MoE。以实际对比为准。
 
 ## 单算子对比（阶段 6）
 
@@ -109,8 +109,10 @@ experts.forward_native(...) # 纯 PyTorch
 
 ## 环境变量绕过验证
 
-定位到 fused_gate 嫌疑后，端到端验证修复：
+定位到某嫌疑算子后，若有对应的"切换到参考路径"开关，可端到端验证：
 ```bash
-VLLM_ENABLE_MOE_FUSED_GATE=0 python3 probe_envvar.py
-# 输出正常中文 + 无 NULL → 确认根因 + 验证修复
+# 例：怀疑 fused_gate 路径时，切到 Python 参考路径
+VLLM_ENABLE_MOE_FUSED_GATE=0 python3 <quickstart 或 probe 脚本>
+# 输出恢复正常 + 与参考实现一致 → 支持该算子为根因
 ```
+注意：绕过开关是**对照验证手段**，不是通用补丁。仅当探针确认该算子为根因时才用。
