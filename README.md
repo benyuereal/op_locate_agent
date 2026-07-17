@@ -37,7 +37,7 @@ HIP_VISIBLE_DEVICES=<空闲卡> python3 examples/quickstart_antangelmed.py \
 | `--prompt` | 内置 | 对比用的提示词 |
 | `--max-tokens` | 32 | 生成 token 数 |
 | `--skip-hf` / `--skip-vllm` | off | 只跑一边 |
-| `--no-fix-env` | off | 不设 `VLLM_ENABLE_MOE_FUSED_GATE=0`（默认会设） |
+| `--fix-env` | off | 显式设 `VLLM_ENABLE_MOE_FUSED_GATE=0` 做对照。**默认不设**——排查工具不预设结论 |
 
 **几种典型用法**
 
@@ -51,8 +51,8 @@ HIP_VISIBLE_DEVICES=2,3,4,5 python3 examples/quickstart_antangelmed.py --model /
 # 只跑 vLLM 一边（先确认 vLLM 自己能出正常输出）
 HIP_VISIBLE_DEVICES=2,3,4,5 python3 examples/quickstart_antangelmed.py --skip-hf
 
-# 非 gfx936-MoE 模型 / 不想加修复开关时
-HIP_VISIBLE_DEVICES=2 python3 examples/quickstart_antangelmed.py --model /path/to/small_model --no-fix-env
+# 已定位到需绕过 fused_gate 做对照验证时（默认不设，排查工具不预设结论）
+HIP_VISIBLE_DEVICES=2,3,4,5 python3 examples/quickstart_antangelmed.py --fix-env
 ```
 
 **选卡注意**
@@ -101,6 +101,46 @@ HIP_VISIBLE_DEVICES=2 python3 examples/quickstart_antangelmed.py --model /path/t
 - ✅ 一致率 ≥ 90% 且无 NULL → 精度正常
 - ❌ vLLM 输出全 NULL(188) → 精度问题未修复，接着用 agent 定位
 - ⚠️ 一致率 < 90% 且非全 NULL → 部分对齐，需进一步定位（用 op-locate skill）
+
+### 逐层 / 逐算子中间值对比（定位到具体层/算子）
+
+quickstart 只比最终 token；当输出不一致时，用
+[`examples/compare_layers.py`](./examples/compare_layers.py) 比每一层、
+每个关键算子的中间张量，**直接打印哪一层开始发散、哪个算子开始发散**：
+
+```bash
+cd op_locate_agent
+
+# 默认比所有层的 attn_out / mlp_out（+ MoE 的 router_logits/topk）
+HIP_VISIBLE_DEVICES=2,3,4,5 python3 examples/compare_layers.py
+
+# 大模型省显存：只比几层
+HIP_VISIBLE_DEVICES=2,3,4,5 python3 examples/compare_layers.py --layers 0,1,2,3,15,30
+
+# 只比 MoE router（选专家那一步）
+HIP_VISIBLE_DEVICES=2,3,4,5 python3 examples/compare_layers.py --only router
+
+# 对照：让 vLLM 绕过 fused_gate，看中间值是否恢复一致
+HIP_VISIBLE_DEVICES=2,3,4,5 python3 examples/compare_layers.py --fix-env
+```
+
+输出形如（逐层逐算子一行，标出首个发散点）：
+
+```
+[compare] 逐层 / 逐算子中间值对比
+---------------------------------------------------------------------------
+layer0_attn_out                1.000000   0.0000e+00   0.0000e+00 ✅
+layer0_mlp_out                 0.999998   1.2e-03      3.4e-05    ✅
+layer1_attn_out                1.000000   0.0000e+00   0.0000e+00 ✅
+layer1_mlp_out                 0.872341   4.7e+01      1.2e+00    ❌
+---------------------------------------------------------------------------
+[verdict] ❌ 首个发散点: layer1_mlp_out
+  → 该层/算子之前的层都一致，从这里开始 HF 与 vLLM 分叉。
+  → 用 op-locate skill 在此层内继续细化（sub-op 级 hook）。
+```
+
+> 工作流：quickstart 发现不一致 → compare_layers 找到首个发散层/算子 →
+> op-locate skill 在该层内挂 sub-op hook 进一步缩小到具体算子。
 
 ### 单独跑启动脚本（调试用）
 
@@ -182,7 +222,7 @@ python3 lib/tensor_compare.py                       # 对比器自检
 |---|---|---|---|
 | AntAngelMed (BailingMoeV2) | ✅ 已定位 | `ops.moe_fused_gate` 在 gfx936 选错专家 | `precision_compare/`（待迁入 reports/） |
 
-修复：`VLLM_ENABLE_MOE_FUSED_GATE=0`（走 Python grouped_topk，正确但慢）。
+对照验证：`VLLM_ENABLE_MOE_FUSED_GATE=0`（走 Python grouped_topk）。**这是该案例的绕过手段，不是 gfx936 通用补丁**——其他模型需独立排查。
 
 ## 设计要点（一句话版）
 

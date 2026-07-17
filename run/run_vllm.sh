@@ -6,13 +6,12 @@
 # 用法：
 #   HIP_VISIBLE_DEVICES=2 ./run_vllm.sh /models/AntAngelMed
 #   HIP_VISIBLE_DEVICES=0,1,6,7 TP=4 ./run_vllm.sh /models/AntAngelMed "你好"
-#   HIP_VISIBLE_DEVICES=2 NO_FIX=1 ./run_vllm.sh /models/AntAngelMed   # 不设修复 env
+#   HIP_VISIBLE_DEVICES=2 FIX_ENV=1 ./run_vllm.sh /models/AntAngelMed   # 显式绕过 fused_gate
 #
 # 环境变量：
 #   HIP_VISIBLE_DEVICES=<ids>      # 必填，卡
 #   TP=<n>                          # tensor parallel，默认=可见卡数
-#   VLLM_ENABLE_MOE_FUSED_GATE=0    # gfx936 MoE 已知正确性修复（默认设）
-#   NO_FIX=1                        # 不设上面的修复
+#   FIX_ENV=1                       # 显式设 VLLM_ENABLE_MOE_FUSED_GATE=0 做对照（排查工具默认不设）
 #   GPU_MEM=0.9  MAX_MODEL_LEN=2048  DTYPE=auto
 
 set -euo pipefail
@@ -33,8 +32,11 @@ if [ "$TP" != "$N_GPU" ]; then
   exit 2
 fi
 
-if [ -z "${NO_FIX:-}" ]; then
+if [ -n "${FIX_ENV:-}" ]; then
   export VLLM_ENABLE_MOE_FUSED_GATE="${VLLM_ENABLE_MOE_FUSED_GATE:-0}"
+  echo "[run_vllm] 已显式设 VLLM_ENABLE_MOE_FUSED_GATE=0（对照验证）"
+else
+  echo "[run_vllm] 未设修复 env（排查工具默认不预设结论）"
 fi
 
 cat > /tmp/_run_vllm.py <<PY
