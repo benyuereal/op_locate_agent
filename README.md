@@ -27,12 +27,14 @@ HIP_VISIBLE_DEVICES=<空闲卡> python3 examples/quickstart_antangelmed.py \
     --max-tokens 32
 ```
 
+> `--model` **必填**——入口脚本不预设模型，指向任意本地模型目录即可。
+
 **参数说明**
 
 | 参数 | 默认 | 说明 |
 |---|---|---|
 | `HIP_VISIBLE_DEVICES` | 必填（前置） | 用哪些卡，**用户自己指定**，脚本不自动选 |
-| `--model` | `/models/AntAngelMed` | 模型本地目录（含 config.json） |
+| `--model` | **必填** | 模型本地目录（含 config.json） |
 | `--tp` | =可见卡数 | vLLM tensor parallel，默认等于暴露的卡数 |
 | `--prompt` | 内置 | 对比用的提示词 |
 | `--max-tokens` | 32 | 生成 token 数 |
@@ -42,17 +44,17 @@ HIP_VISIBLE_DEVICES=<空闲卡> python3 examples/quickstart_antangelmed.py \
 **几种典型用法**
 
 ```bash
-# 默认模型、4 卡：vLLM TP=4 + HF device_map 铺 4 卡
-HIP_VISIBLE_DEVICES=2,3,4,5 python3 examples/quickstart_antangelmed.py
+# 4 卡：vLLM TP=4 + HF device_map 铺 4 卡
+HIP_VISIBLE_DEVICES=2,3,4,5 python3 examples/quickstart_antangelmed.py --model /models/AntAngelMed
 
-# 指定别的模型（大 MoE 同样需要多卡）
+# 换别的模型（大 MoE 同样需要多卡）
 HIP_VISIBLE_DEVICES=2,3,4,5 python3 examples/quickstart_antangelmed.py --model /path/to/other_moe
 
 # 只跑 vLLM 一边（先确认 vLLM 自己能出正常输出）
-HIP_VISIBLE_DEVICES=2,3,4,5 python3 examples/quickstart_antangelmed.py --skip-hf
+HIP_VISIBLE_DEVICES=2,3,4,5 python3 examples/quickstart_antangelmed.py --model /models/AntAngelMed --skip-hf
 
 # 已定位到需绕过 fused_gate 做对照验证时（默认不设，排查工具不预设结论）
-HIP_VISIBLE_DEVICES=2,3,4,5 python3 examples/quickstart_antangelmed.py --fix-env
+HIP_VISIBLE_DEVICES=2,3,4,5 python3 examples/quickstart_antangelmed.py --model /models/AntAngelMed --fix-env
 ```
 
 **选卡注意**
@@ -112,16 +114,16 @@ quickstart 只比最终 token；当输出不一致时，用
 cd op_locate_agent
 
 # 默认比所有层的 attn_out / mlp_out（+ MoE 的 router_logits/topk）
-HIP_VISIBLE_DEVICES=2,3,4,5 python3 examples/compare_layers.py
+HIP_VISIBLE_DEVICES=2,3,4,5 python3 examples/compare_layers.py --model /models/AntAngelMed
 
 # 大模型省显存：只比几层
-HIP_VISIBLE_DEVICES=2,3,4,5 python3 examples/compare_layers.py --layers 0,1,2,3,15,30
+HIP_VISIBLE_DEVICES=2,3,4,5 python3 examples/compare_layers.py --model /models/AntAngelMed --layers 0,1,2,3,15,30
 
 # 只比 MoE router（选专家那一步）
-HIP_VISIBLE_DEVICES=2,3,4,5 python3 examples/compare_layers.py --only router
+HIP_VISIBLE_DEVICES=2,3,4,5 python3 examples/compare_layers.py --model /models/AntAngelMed --only router
 
 # 对照：让 vLLM 绕过 fused_gate，看中间值是否恢复一致
-HIP_VISIBLE_DEVICES=2,3,4,5 python3 examples/compare_layers.py --fix-env
+HIP_VISIBLE_DEVICES=2,3,4,5 python3 examples/compare_layers.py --model /models/AntAngelMed --fix-env
 ```
 
 输出形如（逐层逐算子一行，标出首个发散点）：

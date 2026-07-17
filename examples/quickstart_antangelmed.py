@@ -2,11 +2,13 @@
 quickstart_antangelmed.py — 完整的 vLLM + HF 启动与对比示例
 
 repo 的"门面"例子：clone 下来第一个跑的脚本。
-端到端验证：探测平台 → 跑 HF(基准) → 跑 vLLM(带修复) → 对比输出。
+端到端验证：探测平台 → 跑 HF(基准) → 跑 vLLM → 对比输出。
+（首个验证对象是 AntAngelMed，故脚本名带 antangelmed；但 --model 必填，
+可指向任意本地模型，是通用入口。）
 
 == 卡的指定 ==
 卡由用户用 HIP_VISIBLE_DEVICES 前置指定，脚本继承、不覆盖：
-    HIP_VISIBLE_DEVICES=0,1,6,7 python3 examples/quickstart_antangelmed.py
+    HIP_VISIBLE_DEVICES=0,1,6,7 python3 examples/quickstart_antangelmed.py --model /path/to/model
 
 vLLM 的 TP 默认 = HIP_VISIBLE_DEVICES 的卡数（可用 --tp 覆盖）。
 HF 用 device_map="auto" 自动铺在暴露的卡上（大模型多卡）。
@@ -14,21 +16,21 @@ vLLM 和 HF 各起独立子进程，避免同进程显存互占。
 
 == 用法 ==
     # 4 卡（vLLM TP=4 + HF device_map 4 卡）
-    HIP_VISIBLE_DEVICES=0,1,6,7 python3 examples/quickstart_antangelmed.py
+    HIP_VISIBLE_DEVICES=0,1,6,7 python3 examples/quickstart_antangelmed.py --model /path/to/model
 
     # 单卡（小模型）
-    HIP_VISIBLE_DEVICES=2 python3 examples/quickstart_antangelmed.py
+    HIP_VISIBLE_DEVICES=2 python3 examples/quickstart_antangelmed.py --model /path/to/small_model
 
     # vLLM TP 覆盖
-    HIP_VISIBLE_DEVICES=0,1,6,7 python3 examples/quickstart_antangelmed.py --tp 2
+    HIP_VISIBLE_DEVICES=0,1,6,7 python3 examples/quickstart_antangelmed.py --model /path/to/model --tp 2
 
     # 只跑某一边
-    HIP_VISIBLE_DEVICES=2,3,4,5 python3 examples/quickstart_antangelmed.py --skip-vllm
-    HIP_VISIBLE_DEVICES=2 python3 examples/quickstart_antangelmed.py --skip-hf
+    HIP_VISIBLE_DEVICES=2,3,4,5 python3 examples/quickstart_antangelmed.py --model /path/to/model --skip-vllm
+    HIP_VISIBLE_DEVICES=2 python3 examples/quickstart_antangelmed.py --model /path/to/small_model --skip-hf
 
 == 前置 ==
     - vLLM + transformers + torch 已装
-    - 模型已下载到本地（默认 /models/AntAngelMed）
+    - 模型已下载到本地（--model 指定路径）
     - 用户已确认指定卡空闲（rocminfo 查显存）
 
 == 说明 ==
@@ -55,8 +57,8 @@ def parse_args():
         description="vLLM + HF quickstart 对比",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    ap.add_argument("--model", default="/models/AntAngelMed",
-                    help="模型本地路径")
+    ap.add_argument("--model", required=True,
+                    help="模型本地路径（必填，含 config.json）")
     ap.add_argument("--tp", type=int, default=None,
                     help="vLLM tensor parallel size，默认=HIP_VISIBLE_DEVICES 卡数")
     ap.add_argument("--prompt", default="你好，请介绍一下你自己，你叫什么名字")
@@ -229,7 +231,7 @@ def main():
     ngpu = n_visible_gpus()
     if ngpu == 0:
         print("错误：请用 HIP_VISIBLE_DEVICES 前置指定卡，例如：\n"
-              "  HIP_VISIBLE_DEVICES=0,1,6,7 python3 examples/quickstart_antangelmed.py",
+              "  HIP_VISIBLE_DEVICES=2,3,4,5 python3 examples/quickstart_antangelmed.py --model /path/to/model",
               file=sys.stderr)
         sys.exit(2)
 
