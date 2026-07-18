@@ -1,5 +1,5 @@
 """
-op_locate_agent.lib — 可复用工具库
+op-locate-agent.lib — 可复用工具库
 
 agent 的"手"：config 解析、路径解析、hook、对比、启动、报告。
 所有模块设计为零副作用导入（import 不会启动 GPU / 不会读环境变量）。

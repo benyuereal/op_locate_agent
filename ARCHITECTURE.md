@@ -22,7 +22,7 @@
 ## 2. 目录结构
 
 ```
-op_locate_agent/
+op-locate-agent/
 ├── examples/                    # 入口脚本（门面）
 │   ├── probe_model.py           # 探测模型结构属性名 → 落盘 JSON/MD
 │   ├── quickstart_antangelmed.py# 端到端 vLLM+HF token 对比

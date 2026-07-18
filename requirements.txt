@@ -1,4 +1,4 @@
-# op_locate_agent 运行依赖
+# op-locate-agent 运行依赖
 # 核心工具库（lib）零框架依赖：只需 torch + transformers + safetensors
 # vLLM 在定位目标环境里已装；此处列出便于新环境复现
 

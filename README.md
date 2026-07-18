@@ -95,7 +95,7 @@ python3 lib/config_loader.py <模型路径>   # lib 自检
 ## 目录
 
 ```
-op_locate_agent/
+op-locate-agent/
 ├── examples/      # 入口脚本：quickstart / compare_layers / probe_model / generate_report
 ├── lib/           # 工具库（agent 的"手"）：config/hook/compare/probe
 ├── knowledge/     # 知识库（agent 的"脑"）：arch→路径、已知坑、平台

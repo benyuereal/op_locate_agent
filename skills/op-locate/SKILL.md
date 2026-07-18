@@ -32,10 +32,10 @@ allowed-tools: Bash, Read, Write, Edit, Glob, Grep, WebFetch
 
 ## 工具与知识
 
-- **工具库**：`op_locate_agent/lib/`（config_loader, path_resolver, hook_manager, tensor_compare）
-- **知识库**：`op_locate_agent/knowledge/`（arch_index, vllm_forward_paths, moe_known_issues, hook_pitfalls, platforms/hygon_dcu）
+- **工具库**：`op-locate-agent/lib/`（config_loader, path_resolver, hook_manager, tensor_compare）
+- **知识库**：`op-locate-agent/knowledge/`（arch_index, vllm_forward_paths, moe_known_issues, hook_pitfalls, platforms/hygon_dcu）
 
-> 假设 cwd 为 `op_locate_agent/`。lib 可 `import lib`，knowledge 用 Read 读。
+> 假设 cwd 为 `op-locate-agent/`。lib 可 `import lib`，knowledge 用 Read 读。
 
 ## 流程（7 阶段）
 
