@@ -35,7 +35,7 @@ vLLM 和 HF 各起独立子进程，避免同进程显存互占。
 
 == 说明 ==
     - 排查工具不预设结论：默认【不设】任何修复/绕过环境变量。
-      若已定位到需绕过 fused_gate 做对照验证，用 --fix-env 显式开启。
+      若已定位到需绕过 fused_gate 做对照验证，用 --env 显式开启。
     - 真正的逐层/逐算子中间值对比见 examples/compare_layers.py。
 """
 
@@ -65,7 +65,7 @@ def parse_args():
     ap.add_argument("--max-tokens", type=int, default=32)
     ap.add_argument("--skip-hf", action="store_true", help="跳过 HF 基准")
     ap.add_argument("--skip-vllm", action="store_true", help="跳过 vLLM")
-    ap.add_argument("--fix-env", action="store_true",
+    ap.add_argument("--env", action="store_true",
                     help="显式设 VLLM_ENABLE_MOE_FUSED_GATE=0（绕过 fused_gate 走 Python 路径）。"
                          "默认【不设】——排查工具不预设结论，需对照验证时再开")
     return ap.parse_args()
@@ -190,11 +190,11 @@ def run_hf(args):
 
 def run_vllm(args, tp):
     print("\n" + "=" * 60)
-    tag = "VLLM_ENABLE_MOE_FUSED_GATE=0" if args.fix_env else "no fix env (默认)"
+    tag = "VLLM_ENABLE_MOE_FUSED_GATE=0" if args.env else "no env (默认)"
     print(f"[vLLM] 加载 vLLM (tp={tp}, {tag})...")
     print("=" * 60)
     extra = {}
-    if args.fix_env:
+    if args.env:
         extra["VLLM_ENABLE_MOE_FUSED_GATE"] = "0"
     script = _VLLM_SCRIPT % (args.model, args.prompt, args.max_tokens, tp)
     return run_subprocess(script, extra_env=extra, tag="vLLM")

@@ -19,7 +19,7 @@ HIP_VISIBLE_DEVICES=<空闲卡> python3 examples/quickstart_antangelmed.py \
 ```
 
 `--model` **必填**。同时跑 HF(基准)+vLLM，对比输出 token：✅ 一致率≥90% 且无 NULL / ❌ vLLM 全 NULL / ⚠️ 部分不一致。
-`--fix-env` 显式设 `VLLM_ENABLE_MOE_FUSED_GATE=0` 做对照（**默认不设**——排查工具不预设结论）。
+`--env` 显式设 `VLLM_ENABLE_MOE_FUSED_GATE=0` 做对照（**默认不设**——排查工具不预设结论）。
 
 ### 2. 逐层 / 逐算子对比（定位到发散的层/算子）
 
@@ -30,7 +30,7 @@ HIP_VISIBLE_DEVICES=<空闲卡> python3 examples/compare_layers.py \
     --model <模型路径> --layers 0,1,2,3 --probe-dir /tmp/probe_xxx
 ```
 
-`--probe-dir` 读探测结果（见第 3 步），跳过运行时探测；`--layers` 只比指定层（省显存）；`--only router` 只比 MoE 选专家；`--fix-env` 对照验证。
+`--probe-dir` 读探测结果（见第 3 步），跳过运行时探测；`--layers` 只比指定层（省显存）；`--only router` 只比 MoE 选专家；`--env` 对照验证。
 
 ### 3. 探测模型结构（先跑这个，落盘供第 2 步用）
 
@@ -85,6 +85,6 @@ op_locate_agent/
 ## 设计要点
 
 - **运行时探针为准**：根因以 hook 抓取为准，不以静态分析为准（曾致误判）。
-- **不预设结论**：排查工具默认不设修复环境变量，需对照时显式开 `--fix-env`。
+- **不预设结论**：排查工具默认不设修复环境变量，需对照时显式开 `--env`。
 - **不自动回写知识库**：人工 review 是质量门，防错误结论污染。
 - **脱离 CLI 但能力不打折**：headless `claude -p` 推理仍满血，工具仍是本库。
