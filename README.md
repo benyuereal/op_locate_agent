@@ -46,7 +46,26 @@ python3 examples/probe_model.py --model <模型路径> --workdir /tmp/probe_xxx
 
 输出 `/tmp/probe_xxx/model_probe.json` + `.md`，每项带来源与置信度（high=两路一致）。不加载权重，只 from_config 建空结构，快且省显存。
 
-> **工作流**：第 3 步探测结构 → 第 1 步看是否对齐 → 不一致则第 2 步定位发散层 → op-locate skill 在层内 sub-op 细化。
+### 4. 出报告（把定位结论 + vLLM 源码调用链落盘）
+
+定位到算子后，用 `generate_report.py` 生成可人核的报告——从 compare_layers 落盘重算 cos 表，**实时 grep vLLM 源码**抽算子 forward + 调用链，套模板写 `report.md` / `verdict.json`：
+
+```bash
+python3 examples/generate_report.py \
+    --model <模型路径> \
+    --compare-dir /tmp/compare_layers_xxx \   # 可多次传入聚合多轮（粗粒度+router+mlp）
+    --probe-dir /tmp/probe_xxx \
+    --symptom "vLLM 输出异常描述"
+```
+
+产出 `reports/<model>_<date>/`：
+- `report.md`：现象、逐 stage cos 表、定位过程、**vLLM 源码调用链**（实时抽取，标 `file:line`）、根因、被证伪假设。
+- `verdict.json`：`bug_operator` / `bug_file` / `root_cause` / `confidence`。
+- `evidence/stage_cos.csv` + `evidence/source_snippets.md`。
+
+> 多轮聚合：粗粒度逐层 + `--only router` + `--only mlp` 各跑一次 compare_layers，`--compare-dir` 多次传入，被证伪的 router 假设会自动进报告。
+
+> **工作流**：第 3 步探测结构 → 第 1 步看是否对齐 → 不一致则第 2 步定位发散层 → op-locate skill 在层内 sub-op 细化 → 第 4 步出报告。
 
 ## 用 agent 自动定位
 
@@ -77,7 +96,7 @@ python3 lib/config_loader.py <模型路径>   # lib 自检
 
 ```
 op_locate_agent/
-├── examples/      # 入口脚本：quickstart / compare_layers / probe_model
+├── examples/      # 入口脚本：quickstart / compare_layers / probe_model / generate_report
 ├── lib/           # 工具库（agent 的"手"）：config/hook/compare/probe
 ├── knowledge/     # 知识库（agent 的"脑"）：arch→路径、已知坑、平台
 ├── skills/op-locate/  # Claude Code skill（流程编排）

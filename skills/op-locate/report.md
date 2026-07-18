@@ -2,6 +2,24 @@
 
 > SKILL.md 阶段 7 的细化规范。
 
+## 执行入口
+
+**用 `examples/generate_report.py` 生成，不要手写报告。** 脚本会：
+1. 从 compare_layers 落盘（`hf_inter.pt`/`vllm_inter.pt`）重算逐 stage cos 表；
+2. 按发散点实时 grep vLLM 包，抽算子 `forward` + 调用链（标 `file:line`）；
+3. 套下面的模板写 `report.md` / `verdict.json` / `evidence/`。
+
+```bash
+python3 examples/generate_report.py \
+    --model <模型路径> \
+    --compare-dir /tmp/compare_layers_xxx \   # 可多次传入聚合多轮细化
+    --probe-dir /tmp/probe_xxx \
+    --symptom "vLLM 输出异常描述"
+```
+
+`confidence`：`medium`（探针确认算子级发散）/ `high`（+ 绕过验证恢复）/ `low`（推测）。
+本脚本的模板即下方规范；如需调整输出，改脚本而非手写。
+
 ## 报告目录结构
 
 ```

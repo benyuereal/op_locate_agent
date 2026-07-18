@@ -228,44 +228,49 @@ if only_arg is None:
             cap[key] = output.detach().to(torch.float32).cpu()
     hooks.append(model.lm_head.register_forward_hook(logits_hook, with_kwargs=True))
 else:
-    # ---- 子算子细化（drill-down）：attn_out / mlp_out / router_logits ----
+    # ---- 子算子细化（drill-down）：只抓 prefill，key 不带 phase ----
+    router_patches = []  # (mod, orig) 还原用
     for li in layers:
         base = hf.layers[li]
         if only_arg == "attn" and attn_attr:
             mod = getattr(base, attn_attr)
             def make_post(idx, name):
                 def ph(module, args, kwargs, output):
-                    key = f"{phase['v']}:layer{idx}_{name}"
+                    key = f"layer{idx}_{name}"
                     if key not in cap:
-                        cap[key] = output.detach().to(torch.float32).cpu()
+                        t = output[0] if isinstance(output, tuple) else output
+                        cap[key] = t.detach().to(torch.float32).cpu()
                 return ph
             hooks.append(mod.register_forward_hook(make_post(li, "attn_out"), with_kwargs=True))
         if only_arg == "mlp" and mlp_attr:
             mod = getattr(base, mlp_attr)
             def make_post2(idx, name):
                 def ph(module, args, kwargs, output):
-                    key = f"{phase['v']}:layer{idx}_{name}"
+                    key = f"layer{idx}_{name}"
                     if key not in cap:
-                        cap[key] = output.detach().to(torch.float32).cpu()
+                        t = output[0] if isinstance(output, tuple) else output
+                        cap[key] = t.detach().to(torch.float32).cpu()
                 return ph
             hooks.append(mod.register_forward_hook(make_post2(li, "mlp_out"), with_kwargs=True))
         if only_arg == "router" and prof.is_moe and router_rel:
-            # gate.forward 返回 tuple (topk_idx, topk_weight, logits)；post-hook 抓
-            # 整个 tuple，取 output_index=-1 即 logits
+            # gate.forward 返回 tuple (topk_idx, topk_weight, logits)；monkey-patch
+            # forward 取 output[-1] 即 logits（post-hook 抓 tuple 不便取项）
             mod = base
             for p in router_rel.split("."):
                 mod = getattr(mod, p)
-            def make_router(idx):
-                orig = mod.forward
+            orig = mod.forward
+            def make_router(idx, orig_fn):
                 def patched(*a, **kw):
-                    out = orig(*a, **kw)
-                    key = f"{phase['v']}:layer{idx}_router_logits"
+                    out = orig_fn(*a, **kw)
+                    key = f"layer{idx}_router_logits"
                     if key not in cap:
                         t = out[-1] if isinstance(out, tuple) else out
                         cap[key] = t.detach().to(torch.float32).cpu()
                     return out
                 return patched
-            mod.forward = make_router(li)
+            mod.forward = make_router(li, orig)
+            router_patches.append((mod, orig))
+            hooks.append("router_patch")  # 计数占位
 print(f"[HF] hook 点数: {len(hooks)}", flush=True)
 
 # ---- prefill forward ----
@@ -276,20 +281,25 @@ pos_ids = torch.arange(0, seq_len, dtype=torch.long).unsqueeze(0).to(first_dev)
 print(f"[HF] prefill ({seq_len} tokens)...", flush=True)
 with torch.no_grad():
     out_pre = model(input_ids=ids, position_ids=pos_ids, use_cache=True)
-print(f"[HF] prefill 抓到 {sum(1 for k in cap if k.startswith('prefill'))} 个", flush=True)
+print(f"[HF] prefill 抓到 {len(cap)} 个", flush=True)
 
-# ---- decode step 1 ----
-phase["v"] = "decode1"
-next_tok = out_pre.logits[0, -1, :].argmax(dim=-1, keepdim=True).unsqueeze(0)
-next_pos = torch.tensor([[seq_len]], dtype=torch.long, device=first_dev)
-print(f"[HF] decode1 (next_tok={next_tok.item()})...", flush=True)
-with torch.no_grad():
-    _ = model(input_ids=next_tok, position_ids=next_pos,
-              use_cache=True, past_key_values=out_pre.past_key_values)
-print(f"[HF] decode1 抓到 {sum(1 for k in cap if k.startswith('decode1'))} 个", flush=True)
+# ---- decode step 1（仅默认口径需要；--only 子算子模式只看 prefill）----
+if only_arg is None:
+    phase["v"] = "decode1"
+    next_tok = out_pre.logits[0, -1, :].argmax(dim=-1, keepdim=True).unsqueeze(0)
+    next_pos = torch.tensor([[seq_len]], dtype=torch.long, device=first_dev)
+    print(f"[HF] decode1 (next_tok={next_tok.item()})...", flush=True)
+    with torch.no_grad():
+        _ = model(input_ids=next_tok, position_ids=next_pos,
+                  use_cache=True, past_key_values=out_pre.past_key_values)
+    print(f"[HF] decode1 抓到 {sum(1 for k in cap if k.startswith('decode1'))} 个", flush=True)
 
 for h in hooks:
+    if isinstance(h, str): continue
     try: h.remove()
+    except Exception: pass
+for mod, orig in router_patches:
+    try: mod.forward = orig
     except Exception: pass
 
 torch.save(cap, out_pt)
@@ -388,51 +398,47 @@ def _attach_stage_hooks(worker, layer_indices, only_arg, attn_attr, mlp_attr, ro
                 model._cap[key] = output.detach().to(torch.float32).cpu().clone()
         model._st_hooks.append(model.lm_head.register_forward_hook(logits_hook, with_kwargs=True))
     else:
-        # ---- 子算子细化 ----
+        # ---- 子算子细化（drill-down）：只抓 prefill（第一次触发），不区分阶段 ----
+        # key 不带 phase 前缀；if key not in cap 保证只记 prefill 那次。
+        # 避免阶段翻转错位（--layers 单层时 prefill 一触发就翻阶段会把 prefill 值记成 decode1）。
         for li in layer_indices:
             base = inner.layers[li]
             if only_arg == "attn" and attn_attr:
                 mod = getattr(base, attn_attr)
                 def make_post(idx):
                     def ph(module, args, kwargs, output):
-                        phase = model._st_phase
-                        key = f"{phase}:layer{idx}_attn_out"
+                        key = f"layer{idx}_attn_out"
                         if key not in model._cap:
-                            model._cap[key] = output.detach().to(torch.float32).cpu()
+                            t = output[0] if isinstance(output, tuple) else output
+                            model._cap[key] = t.detach().to(torch.float32).cpu()
                     return ph
                 model._st_hooks.append(mod.register_forward_hook(make_post(li), with_kwargs=True))
             if only_arg == "mlp" and mlp_attr:
                 mod = getattr(base, mlp_attr)
                 def make_post2(idx):
                     def ph(module, args, kwargs, output):
-                        phase = model._st_phase
-                        key = f"{phase}:layer{idx}_mlp_out"
+                        key = f"layer{idx}_mlp_out"
                         if key not in model._cap:
-                            model._cap[key] = output.detach().to(torch.float32).cpu()
+                            t = output[0] if isinstance(output, tuple) else output
+                            model._cap[key] = t.detach().to(torch.float32).cpu()
                     return ph
                 model._st_hooks.append(mod.register_forward_hook(make_post2(li), with_kwargs=True))
             if only_arg == "router" and is_moe and router_rel:
                 mod = base
                 for p in router_rel.split("."):
                     mod = getattr(mod, p)
-                def make_router(idx):
-                    orig = mod.forward
+                orig_fn = mod.forward
+                def make_router(idx, orig_fn):
                     def patched(*a, **kw):
-                        out = orig(*a, **kw)
-                        phase = model._st_phase
-                        key = f"{phase}:layer{idx}_router_logits"
+                        out = orig_fn(*a, **kw)
+                        key = f"layer{idx}_router_logits"
                         if key not in model._cap:
                             t = out[-1] if isinstance(out, tuple) else out
                             model._cap[key] = t.detach().to(torch.float32).cpu()
                         return out
                     return patched
-                mod.forward = make_router(li)
-                model._st_patches.append((mod, mod.forward))
-        # 子算子模式：用第一个采样层首次触发后翻阶段
-        def phase_flip(module, args, kwargs):
-            if model._st_phase == "prefill":
-                model._st_phase = "decode1"
-        model._st_hooks.append(inner.layers[layer_indices[0]].register_forward_pre_hook(phase_flip, with_kwargs=True))
+                mod.forward = make_router(li, orig_fn)
+                model._st_patches.append((mod, orig_fn))
     return {"attached": len(model._st_hooks), "layers": layer_indices, "only": only_arg}
 
 def _fetch_cap(worker):
@@ -599,21 +605,25 @@ def main():
     hf = torch.load(hf_pt)
     vllm = torch.load(vllm_pt)
 
-    # stage 顺序：embedding → 各层 layer_in → final_norm → logits（仅默认口径）
-    # 子算子口径：各层 attn_out/mlp_out/router_logits
+    # stage 顺序：默认口径 embedding → 各层 layer_in → final_norm → logits，带 phase 前缀
+    # 子算子口径（--only）：各层 attn_out/mlp_out/router_logits，只比 prefill，key 无 phase 前缀
     if args.only is None:
         stage_order = ["embedding"] + [f"layer{i}_in" for i in layers_arg] + ["final_norm", "logits"]
+        phases = ["prefill", "decode1"] if args.max_tokens >= 1 else ["prefill"]
+        key_of = lambda phase, st: f"{phase}:{st}"
     else:
         suffix = {"attn": "attn_out", "mlp": "mlp_out", "router": "router_logits"}[args.only]
         stage_order = [f"layer{i}_{suffix}" for i in layers_arg]
+        phases = ["prefill"]
+        key_of = lambda phase, st: st  # --only 模式 key 无 phase 前缀
 
     first_diverge = None
-    for phase in (["prefill", "decode1"] if args.max_tokens >= 1 else ["prefill"]):
+    for phase in phases:
         print(f"\n----- phase: {phase} -----")
         print(f"{'stage':<24} {'cos':>10} {'max_abs':>12} {'mean_abs':>12} {'verdict'}")
         print("-" * 76)
         for st in stage_order:
-            key = f"{phase}:{st}"
+            key = key_of(phase, st)
             a = hf.get(key); b = vllm.get(key)
             if a is None or b is None:
                 print(f"{st:<24} {'MISSING':>10}  hf={'no' if a is None else 'ok'} vllm={'no' if b is None else 'ok'}")
@@ -629,7 +639,7 @@ def main():
                 print(f"{st:<24} {r.cos:>10.6f} {r.max_abs_diff:>12.4e} "
                       f"{r.mean_abs_diff:>12.4e} {mark}")
                 if not ok and first_diverge is None:
-                    first_diverge = f"{phase}:{st}"
+                    first_diverge = key
             except Exception as e:
                 print(f"{st:<24} ERR {e}")
 
