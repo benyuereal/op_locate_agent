@@ -37,7 +37,7 @@ op-locate-agent/
 │   └── tensor_compare.py        # 张量/topk 对比器
 ├── knowledge/                   # 知识库（agent 的"脑"）
 │   ├── arch_index.md            # 架构 → vLLM 代码路径映射
-│   ├── moe_known_issues.md      # MoE 已知坑
+│   ├── precision_known_issues.md      # MoE 已知坑
 │   ├── model_config_issues.md   # config 缺失字段坑
 │   ├── vllm_forward_paths.md    # vLLM 前向路径速查
 │   ├── hook_pitfalls.md         # hook 口径陷阱

@@ -36,8 +36,34 @@ lm_head → logits
 | `layer{i}_in` | `model.layers.{i}` | pre | 层输入（in-place 污染前的干净值） |
 | `layer{i}_attn_out` | `model.layers.{i}.self_attn` | post | attention 输出 |
 | `layer{i}_mlp_out` | `model.layers.{i}.mlp` | post | MLP/MoE 输出 |
+| `layer{i}_input_norm_out` | `model.layers.{i}.input_layernorm` | post | input norm (rmsnorm/layernorm) |
+| `layer{i}_post_attn_norm_out` | `model.layers.{i}.post_attention_layernorm` | post | post-attention norm |
 
 > 层输出 = 下一层输入，由 `layer{i+1}_in` 覆盖，不必单独抓。
+> norm hook 点通过 `input_norm_attr`/`post_attn_norm_attr` 参数控制（默认 `input_layernorm`/`post_attention_layernorm`）。
+
+## Dense 模型层内拆解（定位到层后的细化）
+
+发现 `mlp_out` 或 `attn_out` 发散后，按此顺序逐点对比：
+
+```
+层输入 (pre)
+  ├─ A. input_norm (rmsnorm/layernorm)  → post_hook 抓 norm 输出
+  ├─ B. attention (flash_attn/eager)    → post_hook 抓 attn_out
+  ├─ C. post_attn_residual              → (A+B，下一层 input 的 pre_hook)
+  ├─ D. post_attention_norm             → post_hook
+  ├─ E. mlp (gate/up/down 投影)         → post_hook 抓 mlp_out
+  └─ F. layer_out                       → 下一层 input
+```
+
+**不同于 MoE**:dense 的 mlp 没有 router→experts 多分支。若 mlp_out 发散，嫌疑在:
+- MLP 融合 kernel (激活融合 GEMM) vs 分组 GEMM
+- bf16 下 gate_proj/up_proj/down_proj 的累加顺序
+- 激活函数 (SiLU/GELU) 的 fp32/bf16 精度
+
+**闪存 attention (flash_attn) 排查**：
+若怀疑 flash_attn 发散，对比 hook: `--op <attn_attr> --layers N` 抓到 attn_out,
+设 `VLLM_ATTENTION_BACKEND=TORCH_SDPA` 对比回退输出。
 
 ## MoE 专用 hook 点
 
@@ -87,4 +113,4 @@ mlp.gate (router gate)         → router_logits      (抓 pre router)
 
 判定 router 是否为根因：对比 vLLM **实际运行时**的 topk_ids 与参考实现。
 （注意：用纯 Python 重算的 topk 不代表 vLLM 实际用的——见 hook_pitfalls.md 陷阱 4。）
-具体算子的已知案例查 moe_known_issues.md，但须独立验证。
+具体算子的已知案例查 precision_known_issues.md，但须独立验证。

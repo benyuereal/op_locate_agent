@@ -1,6 +1,6 @@
-# MoE Known Issues — MoE 已知坑库
+# Precision Known Issues — 精度已知坑库
 
-> MoE 模型在 vLLM 上的**已记录案例**库。按"算子"组织，每条带验证来源。
+> MoE + dense 模型在 vLLM 上的**已记录案例**库。按"算子"组织，每条带验证来源。
 >
 > **重要心态**：这里的每一条都是**某个具体模型在某个具体环境下的已确认案例**，
 > 不是普适结论。新模型/新环境可能复现，也可能不复现——必须用运行时探针独立验证，
@@ -8,7 +8,33 @@
 
 ---
 
-## ops.moe_fused_gate（fused gate kernel）
+## 通用算子（MoE + dense）
+
+### attention (flash_attn / eager / sdpa)
+
+- **文件**: `vllm/attention/`；`vllm/_custom_ops.py` → flash_attn kernel
+- **触发条件**: `VLLM_ATTENTION_BACKEND` 环境变量
+- **通用排查要点**：vLLM 默认走 flash_attn 融合 kernel，与 HF eager/sdpa 累加顺序不同。
+  若怀疑 flash_attn 精度问题，设 `VLLM_ATTENTION_BACKEND=TORCH_SDPA` 回退对比。
+- **已记录案例**：（暂无；待后续定位补充）
+
+### RMSNorm / LayerNorm
+
+- **文件**: `vllm/model_executor/layers/layernorm.py`
+- **通用排查要点**：fp16/bf16 下 RMSNorm 的 eps 加法顺序、power 计算的精度影响。
+  vLLM 用 CUDA fused LayerNorm 的 bf16 中间精度可能与 HF 不同。
+- **已记录案例**：（暂无；待后续定位补充）
+
+### MLP/FFN (gate/up/down 投影 + 激活)
+
+- **文件**: `vllm/model_executor/layers/activation.py`
+- **通用排查要点**：dense 模型用分组 GEMM,MoE 模型走 fused_moe——同是 MLP 但实现路径完全不同。
+  先分 dense/MoE,再算子细化。
+- **已记录案例**：（暂无；待后续定位补充）
+
+---
+
+## MoE 专属算子
 
 - **文件**: `vllm/_custom_ops.py` → `torch.ops._moe_C.moe_fused_gate`
 - **触发条件**: `use_fused_gate=True`

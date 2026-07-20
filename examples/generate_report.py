@@ -74,8 +74,8 @@ def _align(a, b):
 
 
 def _detect_mode(hf_keys):
-    """从落盘 key 判断 compare_layers 当时是默认口径还是 --only 口径。
-    默认口径 key 形如 'prefill:layer1_in'；--only 口径 key 形如 'layer1_mlp_out'。"""
+    """从落盘 key 判断 compare_layers 当时是默认口径还是 --op 口径。
+    默认口径 key 形如 'prefill:layer1_in'；--op 口径 key 形如 'layer1_mlp_out'。"""
     for k in hf_keys:
         if k.startswith(("prefill:", "decode1:")):
             return "default"
@@ -274,75 +274,93 @@ def grep_first(path_or_dir, pattern, is_regex=False):
 
 # 发散 stage → 要在 vLLM 源码里定位的算子/调用点
 # (search_target_file_hint, function_name_to_extract, call_site_pattern)
-def plan_source_extraction(first_diverge, only_arg, vllm_model_file, vllm_root):
+def plan_source_extraction(first_diverge, only_arg, vllm_model_file, vllm_root, profile=None):
     """根据发散点返回要抽的源码片段列表。
-    每项: {label, file, extract_fn (可选), grep (可选), note}"""
+    每项: {label, file, extract_fn (可选), extract_method (可选), note}
+    不再硬编码 BailingMoE / SharedFusedMoE —— 改为按 only_arg + profile 动态定位。"""
     items = []
     if first_diverge is None and only_arg is None:
         return items
 
-    moe_dir = os.path.join(vllm_root, "model_executor", "layers", "fused_moe")
-    fused_moe_py = os.path.join(moe_dir, "fused_moe.py")
-    shared_fused_moe_py = os.path.join(moe_dir, "shared_fused_moe.py")
-    layer_py = os.path.join(moe_dir, "layer.py")
+    is_moe = getattr(profile, "is_moe", False) if profile else False
 
-    # --only 模式：直接定位到对应算子
+    # 通用策略：1) 模型文件里找对应 block 的 forward
+    #           2) 如果 only_arg 是 MoE 算子，去 fused_moe 目录找对应 kernel
+
+    # --- MoE 算子路径 (仅 MoE 模型) ---
+    moe_dir = os.path.join(vllm_root, "model_executor", "layers", "fused_moe")
+
     if only_arg == "router":
-        items.append({
-            "label": "router/gate 算子 (vLLM FusedMoE._compute_routing)",
-            "file": layer_py,
-            "extract_fn": "_compute_routing",
-            "note": "router_logits 已对齐 → 路由决策正确，发散不在此",
-        })
-        return items
-    if only_arg == "mlp":
-        # 这是核心：专家 FFN 融合算子
-        items.append({
-            "label": "MoE 专家 FFN 融合算子 (Triton fused_moe kernel 入口)",
-            "file": fused_moe_py,
-            "extract_fn": "invoke_fused_moe_triton_kernel",
-            "note": "mlp_out 发散点：专家 up/gate/down 投影 + 加权聚合的融合 kernel",
-        })
-        # SharedFusedMoE 在 shared_fused_moe.py，forward 多继承自 FusedMoE(layer.py)
-        items.append({
-            "label": "SharedFusedMoE (融合 kernel 的上层封装)",
-            "file": shared_fused_moe_py,
-            "extract_fn": "SharedFusedMoE",
-            "note": "self.experts(...) 实际经由此类；forward 多在父类 FusedMoE",
-        })
-        items.append({
-            "label": "FusedMoE.forward_cuda (GPU 实际执行路径，CustomOp 分派入口)",
-            "file": layer_py,
-            "extract_fn": "forward_cuda",
-            "note": "FusedMoE 是 CustomOp 子类，无 forward；GPU 走 forward_cuda → forward_impl → dispatch_fused_moe_kernel → invoke_fused_moe_triton_kernel",
-        })
-        if vllm_model_file:
+        if is_moe:
             items.append({
-                "label": "模型侧 MoE block.forward (调用 self.experts)",
-                "file": vllm_model_file,
-                "extract_method": ("BailingMoE", "forward"),
-                "note": "模型文件里 final_hidden_states = self.experts(...)",
+                "label": "router/gate (_compute_routing, fused_moe/layer.py)",
+                "file": os.path.join(moe_dir, "layer.py"),
+                "extract_fn": "_compute_routing",
+                "note": "router_logits 已对齐 → 路由决策正确，发散不在此",
             })
         return items
+
+    if only_arg == "mlp":
+        if is_moe:
+            items.append({
+                "label": "MoE 专家 FFN 融合算子 (Triton fused_moe kernel 入口)",
+                "file": os.path.join(moe_dir, "fused_moe.py"),
+                "extract_fn": "invoke_fused_moe_triton_kernel",
+                "note": "mlp_out 发散点：专家 up/gate/down 投影 + 加权聚合",
+            })
+            items.append({
+                "label": "SharedFusedMoE (融合 kernel 的上层封装)",
+                "file": os.path.join(moe_dir, "shared_fused_moe.py"),
+                "extract_fn": "SharedFusedMoE",
+                "note": "self.experts(...) 实际入口",
+            })
+            items.append({
+                "label": "FusedMoE.forward_cuda (GPU 执行路径)",
+                "file": os.path.join(moe_dir, "layer.py"),
+                "extract_fn": "forward_cuda",
+                "note": "CustomOp 分派 → forward_impl → dispatch_fused_moe_kernel",
+            })
+        # 通用 MLP forward (不管 dense 还是 MoE，模型文件里有对应 block)
+        if vllm_model_file:
+            items.append({
+                "label": "模型侧 MLP/FFN block.forward",
+                "file": vllm_model_file,
+                "grep": r"class\s+\w*(?:MLP|FFN|MoE)\w*",
+                "note": "vLLM 模型文件里的 MLP/MoE 类定义",
+            })
+        return items
+
     if only_arg == "attn":
         if vllm_model_file:
             items.append({
-                "label": "attention 算子 (模型侧)",
+                "label": "attention 算子 (模型侧 forward)",
                 "file": vllm_model_file,
-                "extract_method": ("BailingMoeV2Attention", "forward"),
-                "note": "attn_out 发散点",
+                "grep": r"class\s+\w*(?:Attention|Attn)\w*",
+                "note": "attn_out 发散点；grep Attention 类定位 file:line",
             })
         return items
 
-    # 默认口径：layerN_in 发散 → 误差在 L{N-1} 的 attn 或 MoE 累积
+    # --- 通用算子：--op <任意属性名> ---
+    # 在 vLLM 模型文件里 grep 对应的类/方法
+    if only_arg:
+        if vllm_model_file:
+            items.append({
+                "label": f"算子 {only_arg} (vLLM 模型文件)",
+                "file": vllm_model_file,
+                "grep": rf"class\s+\w*{re.escape(only_arg)}\w*|def\s+{re.escape(only_arg)}",
+                "note": f"--op {only_arg} 的发散定位",
+            })
+        return items
+
+    # 默认口径：layerN_in 发散 → 误差在 L{N-1}
     m = re.match(r"(?:prefill|decode1):layer(\d+)_in", first_diverge or "")
     if m:
         li = int(m.group(1))
         items.append({
-            "label": f"layer{li}_in 发散 → 误差来自 L{li - 1} 的 attention 或 MoE",
-            "file": vllm_model_file or fused_moe_py,
-            "extract_method": ("BailingMoE", "forward"),
-            "note": f"需在 L{li - 1} 跑 --only attn/mlp/router 进一步细化",
+            "label": f"layer{li}_in 发散 → 误差来自 L{li - 1}，需 --op 细化",
+            "file": vllm_model_file or moe_dir,
+            "grep": r"class\s+\w*(?:Decoder|Block|Layer)\w*",
+            "note": f"在 L{li - 1} 跑 --op attn/mlp/<attr> 进一步定位",
         })
     return items
 
@@ -398,20 +416,19 @@ def build_source_snippets(items, vllm_root):
 # ----------------------------------------------------------------------------
 
 def _diverge_to_operator(first_diverge, only_arg, source_records):
-    """把发散点映射成 verdict.json 的 bug_operator / bug_file。"""
-    if only_arg == "mlp":
-        # 找 invoke_fused_moe_triton_kernel 那条记录
-        for r in source_records:
-            if "invoke_fused_moe_triton_kernel" in r["label"] or "fused_moe kernel" in r["label"]:
-                return ("SharedFusedMoE / invoke_fused_moe_triton_kernel",
-                        f"vllm/{r['file']}:{r['lineno']}" if r["lineno"] else f"vllm/{r['file']}")
-        return ("SharedFusedMoE (fused expert FFN kernel)", "vllm/model_executor/layers/fused_moe/fused_moe.py")
-    if only_arg == "router":
-        return ("router/gate (已排除，发散不在此)", None)
-    if only_arg == "attn":
-        return ("attention", None)
+    """把发散点映射成 verdict.json 的 bug_operator / bug_file。
+    不再硬编码 MoE 专属字符串；基于 source_records 动态定位。"""
+    # 找 source_records 里第一条 found=True 的记录
+    for r in source_records:
+        if r.get("found") and r.get("lineno"):
+            op_name = r["label"].split("(")[0].strip()
+            return (f"{only_arg or first_diverge} → {op_name}",
+                    f"vllm/{r['file']}:{r['lineno']}")
+    # fallback
+    if only_arg:
+        return (f"{only_arg} 算子", None)
     if first_diverge:
-        return (f"{first_diverge} (层间残差发散，需 --only 细化上游)", None)
+        return (f"{first_diverge} (需 --op 细化)", None)
     return (None, None)
 
 
@@ -463,7 +480,7 @@ def write_report(out_dir, *, model_name, profile, platform_info, rows,
 
     bug_op, bug_file = _diverge_to_operator(first_diverge, only_arg, source_records)
     has_kernel_record = any(r.get("found") and r.get("lineno") for r in source_records) if only_arg == "mlp" else False
-    # 置信度：--only mlp 抓到发散 + 源码定位到 kernel → medium（探针确认，未做绕过对照）
+    # 置信度：--op mlp 抓到发散 + 源码定位到 kernel → medium（探针确认，未做绕过对照）
     if only_arg == "mlp" and first_diverge:
         confidence = "medium"
     elif first_diverge:
@@ -493,12 +510,12 @@ def write_report(out_dir, *, model_name, profile, platform_info, rows,
 
 **首发散点**：`{first_diverge or "（无）"}`
 
-### 3.2 算子级细化（--only {only_arg}）
+### 3.2 算子级细化（--op {only_arg}）
 """
     if only_arg:
-        report += f"对首发散层用 `--only {only_arg}` 做子算子对比，发散定位到 `{only_arg}` 子算子。\n"
+        report += f"对首发散层用 `--op {only_arg}` 做子算子对比，发散定位到 `{only_arg}` 子算子。\n"
     else:
-        report += "（未做 --only 细化；如需定位到具体算子，对发散层的前一层跑 `--only attn/mlp/router --layers N`）\n"
+        report += "（未做 --op 细化；如需定位到具体算子，对发散层的前一层跑 `--op attn/mlp/router --layers N`）\n"
 
     report += f"""
 ### 3.3 vLLM 源码调用链（实时抽取自 vLLM {vllm_version}）
@@ -516,25 +533,34 @@ def write_report(out_dir, *, model_name, profile, platform_info, rows,
 
 """
     if only_arg == "mlp":
-        report += (
-            "router_logits 对齐（cos≈1.0）但 mlp_out 发散 → 路由决策正确，发散在 "
-            "**专家 FFN 融合算子**（`SharedFusedMoE.forward` → `invoke_fused_moe_triton_kernel`）"
-            "内部：专家 up/gate/down 投影 + 激活 + topk 加权聚合的融合 kernel，与 HF 逐专家 "
-            "`moe_infer` 循环在 bf16 下的累加顺序/精度不一致，经残差链逐层放大。\n\n"
-            "旁证：gfx936 上无官方调优的 fused_moe config（启动日志 `Using default MoE config`），"
-            "default config 的分块/累加策略在非官方调优硬件上易引入精度漂移。\n\n"
-            "**注**：此为探针确认（confidence=medium），尚未做『关闭融合 kernel 回退到分组 GEMM』的对照验证。\n"
-        )
+        if profile and profile.is_moe:
+            report += (
+                "router_logits 对齐但 mlp_out 发散 → 路由决策正确，发散在 "
+                "**专家 FFN 融合算子**（`SharedFusedMoE.forward` → `invoke_fused_moe_triton_kernel`）"
+                "内部：专家 up/gate/down 投影 + 激活 + topk 加权聚合的融合 kernel，与 HF 逐专家 "
+                "`moe_infer` 循环在 bf16 下的累加顺序/精度不一致，经残差链逐层放大。\n\n"
+            )
+        else:
+            report += (
+                "mlp_out 发散 → 误差在 MLP/FFN 子模块。"
+                "HF 与 vLLM 的 MLP 实现（融合 kernel vs 分组 GEMM）可能存在 bf16 累加精度差异。\n\n"
+            )
     elif only_arg == "router":
-        report += "router/gate 已对齐，发散不在此。需继续 `--only mlp` 钻专家 FFN。\n"
+        report += "router/gate 已对齐，发散不在此。需继续 `--op mlp` 钻下游算子。\n"
+    elif only_arg:
+        report += (
+            f"`--op {only_arg}` 探针抓到了 `{only_arg}` 算子的发散。"
+            "HF 与 vLLM 在该算子的实现路径存在精度偏差。"
+            "详见 `evidence/source_snippets.md` 中该算子的源码调用链。\n\n"
+        )
     elif first_diverge:
-        report += (f"层间残差 `{first_diverge}` 发散，误差来自上一层的 attention 或 MoE 累积。"
-                   f"需对上游层跑 `--only attn/mlp/router` 细化。\n")
+        report += (f"层间残差 `{first_diverge}` 发散，误差来自上一层的 attention 或 MLP 累积。"
+                   f"需对上游层跑 `--op <算子>` 细化。\n")
 
     report += f"""
 ## 5. 修复
 （未验证；候选方向：强制 vLLM 回退到非融合分组 GEMM 路径，或为 gfx936 提供 tuned fused_moe config）
-- 待验证：`--only mlp --layers N` + 关闭融合 kernel 对照，确认 mlp_out 是否恢复对齐。
+- 待验证：`--op mlp --layers N` + 关闭融合 kernel 对照，确认 mlp_out 是否恢复对齐。
 
 ## 6. 被证伪的假设
 | 假设 | 验证方式 | 结论 |
@@ -573,9 +599,10 @@ vLLM 版本：{vllm_version}
         "bug_operator": bug_op,
         "bug_file": bug_file,
         "root_cause": (
-            "专家 FFN 融合算子(invoke_fused_moe_triton_kernel)与 HF 逐专家 moe_infer 在 bf16 下累加精度不一致，残差链逐层放大"
-            if only_arg == "mlp" else
-            (f"{first_diverge} 发散，待 --only 细化" if first_diverge else None)
+            "MoE 专家 FFN 融合算子 与 HF 逐专家循环在 bf16 下累加精度不一致，残差链逐层放大"
+            if only_arg == "mlp" and profile and profile.is_moe else
+            (f"{only_arg} 算子 HF vs vLLM 精度发散" if only_arg else
+             (f"{first_diverge} 发散，待 --op 细化" if first_diverge else None))
         ),
         "fix": None,
         "fix_verified": False,
@@ -700,7 +727,7 @@ def main():
     rows = all_rows
 
     # 2. 抽源码
-    items = plan_source_extraction(first_diverge, only_arg, vllm_model_file, vllm_root)
+    items = plan_source_extraction(first_diverge, only_arg, vllm_model_file, vllm_root, profile)
     source_md, source_records = build_source_snippets(items, vllm_root)
     print(f"[report] 抽取源码片段: {len(source_records)} 条")
 
@@ -711,14 +738,14 @@ def main():
     if has_router_ok and has_mlp_diverge:
         falsified.append({
             "hypothesis": "发散在 router/gate (fused_gate)",
-            "method": "--only router 对比 router_logits",
+            "method": "--op router 对比 router_logits",
             "verdict": "❌ 证伪（router_logits cos≈1.0，mlp_out 仍发散）",
         })
     has_attn_ok = any(r["stage"].endswith("attn_out") and r["verdict"] == "OK" for r in rows)
     if has_attn_ok and has_mlp_diverge:
         falsified.append({
             "hypothesis": "发散在 attention",
-            "method": "--only attn 对比 attn_out",
+            "method": "--op attn 对比 attn_out",
             "verdict": "❌ 证伪（attn_out 对齐，mlp_out 仍发散）",
         })
 

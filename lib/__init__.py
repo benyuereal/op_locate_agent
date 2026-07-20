@@ -10,6 +10,7 @@ from .path_resolver import CodePaths, KeyOp, resolve_code_paths
 from .hook_manager import (
     HookManager, HookPoint, CaptureSpec,
     transformer_hook_points, moe_router_hook_points,
+    generic_hook_point,
 )
 from .tensor_compare import (
     TensorComparator,
@@ -32,6 +33,7 @@ __all__ = [
     "CaptureSpec",
     "transformer_hook_points",
     "moe_router_hook_points",
+    "generic_hook_point",
     "TensorComparator",
     "CompareResult",
     "compare_topk",

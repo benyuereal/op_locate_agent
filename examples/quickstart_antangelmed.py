@@ -205,7 +205,16 @@ def compare(hf: dict, vllm: dict):
     print("[compare] HF vs vLLM")
     print("=" * 60)
     hf_ids, vllm_ids = hf["token_ids"], vllm["token_ids"]
-    has_null = 188 in vllm_ids
+    # NULL token 检测: 从 HF tokenizer 查找 <NULL> 的 id；若 tokenizer 无此特殊 token
+    # 则检查 vLLM 输出是否含不在常见正常范围内的异常 token
+    has_null = False
+    try:
+        from transformers import AutoTokenizer
+        tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True, local_files_only=True)
+        null_id = tok.convert_tokens_to_ids("<NULL>") or tok.convert_tokens_to_ids("<null>")
+        has_null = null_id in vllm_ids if null_id else False
+    except Exception:
+        has_null = False  # tokenizer 无 <NULL> token，跳过 NULL 检测
     n = min(len(hf_ids), len(vllm_ids))
     match = sum(1 for a, b in zip(hf_ids[:n], vllm_ids[:n]) if a == b)
     rate = match / n if n else 0

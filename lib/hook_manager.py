@@ -237,8 +237,30 @@ def transformer_hook_points(
         pts.append(HookPoint(f"layer{i}_in", base, kind="pre"))
         pts.append(HookPoint(f"layer{i}_attn_out", f"{base}.{attn_attr}", kind="post"))
         pts.append(HookPoint(f"layer{i}_mlp_out", f"{base}.{mlp_attr}", kind="post"))
+        # norm hook 点（如 rmsnorm / layernorm 精度问题排查）
+        if input_norm_attr:
+            pts.append(HookPoint(f"layer{i}_input_norm_out",
+                        f"{base}.{input_norm_attr}", kind="post"))
+        if post_attn_norm_attr:
+            pts.append(HookPoint(f"layer{i}_post_attn_norm_out",
+                        f"{base}.{post_attn_norm_attr}", kind="post"))
     # 层间衔接：每层输出 = 下一层输入(pre)，由下一个 layer{i+1}_in 覆盖
     return pts
+
+
+def generic_hook_point(
+    layer_idx: int, attr_path: str, *, layer_prefix: str = "model.layers",
+    kind: str = "post", label: Optional[str] = None,
+) -> HookPoint:
+    """按任意属性路径生成单个 hook 点，不限于预定义类别。
+
+    用法：
+        generic_hook_point(1, "rmsnorm", kind="post")
+        generic_hook_point(1, "attention.flash_attn", kind="pre")
+    """
+    full_path = f"{layer_prefix}.{layer_idx}.{attr_path}"
+    name = label or f"layer{layer_idx}_{attr_path.replace('.', '_')}_{kind}"
+    return HookPoint(name, full_path, kind=kind)
 
 
 def moe_router_hook_points(

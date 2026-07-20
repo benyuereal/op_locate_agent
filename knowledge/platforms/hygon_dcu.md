@@ -61,7 +61,7 @@ vLLM 多处用 `current_platform.is_cuda()` 做平台守卫。DCU 上 `is_cuda()
 
 > 这就是为什么 `ops.grouped_topk` 在 DCU 上**从未被调用**——它被 is_cuda 守卫挡在外面。
 > 真正执行的是 `ops.moe_fused_gate`（经 `use_fused_gate=True`，与 is_cuda 无关）。
-> 详见 `moe_known_issues.md` 的"易混淆点"。
+> 详见 `precision_known_issues.md` 的"易混淆点"。
 
 ## 设备可见性
 
@@ -83,7 +83,7 @@ Using default MoE config. Config file not found at
 .../fused_moe/configs/E=256,N=256,device_name=gfx936_64cu_nn.json
 ```
 - **影响**: 仅性能（fused kernel 用默认配置），**通常不影响正确性**。
-  若怀疑影响精度，用 fused vs native 对比证实（见 moe_known_issues.md）。
+  若怀疑影响精度，用 fused vs native 对比证实（见 precision_known_issues.md）。
 - gfx938 机型配置文件名不同，但同理：缺失通常只影响性能。
 
 ## 推荐调试环境变量

@@ -7,7 +7,7 @@ path_resolver.py — 模型配置 → vLLM/HF 实际代码路径
 解析策略：
 1. vLLM 模型文件：model_type → 文件名映射（含已知别名）+ 文件存在性校验
 2. MoE 路径：固定（vLLM 的 fused_moe 结构稳定）
-3. 关键算子入口：查 knowledge/moe_known_issues.md（先尝试程序化匹配，
+3. 关键算子入口：查 knowledge/precision_known_issues.md（先尝试程序化匹配，
    匹配不到返回空列表，由 agent 读 markdown 补充）
 4. HF modeling：ModelProfile.custom_py_files 里的 modeling_*.py
 
@@ -47,8 +47,10 @@ class CodePaths:
     """模型相关的全部代码路径"""
     vllm_root: str                       # vllm 包根目录
     vllm_model_file: Optional[str]       # vllm/model_executor/models/xxx.py
-    vllm_moe_layer: Optional[str]        # fused_moe/layer.py
-    vllm_router_dir: str                 # fused_moe/router/
+    vllm_moe_layer: Optional[str]        # fused_moe/layer.py (MoE 模型)
+    vllm_router_dir: str                 # fused_moe/router/ (MoE 模型)
+    vllm_attention_dir: str              # vllm/attention/ (通用)
+    vllm_norm_file: str                  # layernorm.py 路径 (通用)
     vllm_custom_ops: str                 # _custom_ops.py
     hf_modeling: Optional[str]           # 本地 modeling_*.py
     hf_config_py: Optional[str]          # 本地 configuration_*.py
@@ -163,8 +165,8 @@ def _resolve_hf_files(profile: ModelProfile) -> tuple[Optional[str], Optional[st
 def _infer_key_ops(profile: ModelProfile, vllm_root: str) -> List[KeyOp]:
     """
     根据 ModelProfile 推断可能的关键算子入口。
-    知识库（moe_known_issues.md）的详细条目由 agent 在运行时读取叠加，
-    这里只给出"结构性"入口。
+    知识库（precision_known_issues.md）的详细条目由 agent 在运行时读取叠加，
+    这里只给出"结构性"入口——MoE 模型和 dense 模型都覆盖。
     """
     ops: List[KeyOp] = []
     custom_ops = os.path.join(vllm_root, "_custom_ops.py")
@@ -173,14 +175,35 @@ def _infer_key_ops(profile: ModelProfile, vllm_root: str) -> List[KeyOp]:
     moe_layer = os.path.join(vllm_root, "model_executor", "layers",
                              "fused_moe", "layer.py")
 
+    # --- 通用算子（MoE + dense 都可能有） ---
+    # Attention 实现路径
+    attn_dir = os.path.join(vllm_root, "attention")
+    ops.append(KeyOp(
+        name="attention (flash_attn / eager / sdpa)",
+        file=os.path.relpath(attn_dir, vllm_root),
+        trigger_condition="根据 VLLM_ATTENTION_BACKEND 选择实现",
+    ))
+    # Norm 实现路径
+    norm_py = os.path.join(vllm_root, "model_executor", "layers", "layernorm.py")
+    ops.append(KeyOp(
+        name="RMSNorm / LayerNorm",
+        file=os.path.relpath(norm_py, vllm_root) if os.path.isfile(norm_py) else "model_executor/layers/layernorm.py",
+        trigger_condition="所有 transformer 层通用",
+    ))
+    # Dense MLP / FFN
+    ops.append(KeyOp(
+        name="MLP/FFN (gate/up/down 投影 + 激活)",
+        file=os.path.relpath(
+            os.path.join(vllm_root, "model_executor", "layers", "activation.py"), vllm_root)
+        if os.path.isfile(os.path.join(vllm_root, "model_executor", "layers", "activation.py"))
+        else "model_executor/layers/activation.py",
+        trigger_condition="所有 transformer 层通用；dense 走逐层 GEMM，MoE 走 fused_moe",
+    ))
+
     if not profile.is_moe:
         return ops
 
-    # MoE router 相关
-    # sigmoid + bias → fused_gate 路径
-    # 注意：这里只标注"该算子在此条件下会被调用"这一结构性事实，
-    # 不预置任何具体 bug 结论。具体已知问题查 knowledge/moe_known_issues.md，
-    # 由 agent 在运行时用探针验证，避免先入为主。
+    # --- MoE 专属算子 ---
     if profile.score_function == "sigmoid" and profile.e_score_correction_bias:
         ops.append(KeyOp(
             name="ops.moe_fused_gate",
@@ -189,7 +212,7 @@ def _infer_key_ops(profile: ModelProfile, vllm_root: str) -> List[KeyOp]:
                 "use_fused_gate=True (VLLM_ENABLE_MOE_FUSED_GATE 默认1 且 "
                 "e_score_correction_bias≠None 且 num_expert_group≠None)"
             ),
-            known_issue=None,   # 不预置；查 knowledge/moe_known_issues.md
+            known_issue=None,
             fix=None,
         ))
         ops.append(KeyOp(
@@ -199,15 +222,12 @@ def _infer_key_ops(profile: ModelProfile, vllm_root: str) -> List[KeyOp]:
             trigger_condition="MoE 层路由分发（use_fused_gate 分支判断在此）",
         ))
     else:
-        # softmax / 无 bias → grouped_topk 路径
         ops.append(KeyOp(
             name="grouped_topk (fused / python)",
             file=os.path.relpath(
                 os.path.join(router_dir, "grouped_topk_router.py"), vllm_root),
             trigger_condition="num_expert_group≠None 时走 grouped topk",
         ))
-
-    # MoE 专家 FFN
     ops.append(KeyOp(
         name="FusedMoE.forward (fused / native)",
         file=os.path.relpath(moe_layer, vllm_root),
@@ -240,11 +260,16 @@ def resolve_code_paths(profile: ModelProfile) -> CodePaths:
     hf_modeling, hf_config_py = _resolve_hf_files(profile)
     key_ops = _infer_key_ops(profile, vllm_root)
 
+    attn_dir = os.path.join(vllm_root, "attention")
+    norm_file = os.path.join(vllm_root, "model_executor", "layers", "layernorm.py")
+
     return CodePaths(
         vllm_root=vllm_root,
         vllm_model_file=vllm_model_file,
         vllm_moe_layer=moe_layer if os.path.isfile(moe_layer) else None,
         vllm_router_dir=router_dir,
+        vllm_attention_dir=attn_dir if os.path.isdir(attn_dir) else "",
+        vllm_norm_file=norm_file if os.path.isfile(norm_file) else "",
         vllm_custom_ops=custom_ops,
         hf_modeling=hf_modeling,
         hf_config_py=hf_config_py,

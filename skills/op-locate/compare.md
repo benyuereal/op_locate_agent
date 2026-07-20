@@ -64,23 +64,33 @@ print(r.verdict())
 
 ## 层内 A-F 拆解对比
 
-定位到某层 mlp_out 发散后，逐点对比层内算子：
+定位到某层发散后，逐点对比层内算子。
 
+**MoE 模型**：A-F 六点法（见 `knowledge/vllm_forward_paths.md`）。
+典型情形：A-D 全 cos≈1.0，**E (mlp) 唯一发散** → 矛头指向 MoE。
+
+**Dense 模型**：
 ```python
-# A=input_layernorm B=attention C=post_attn_res D=post_attn_norm E=mlp F=layer_out
-ops_in_layer = ["A_input_ln", "B_attn", "C_post_attn_res", "D_post_attn_norm", "E_mlp", "F_layer_out"]
+ops_in_layer = ["A_input_norm", "B_attn", "C_residual", "D_post_attn_norm", "E_mlp", "F_layer_out"]
 for op in ops_in_layer:
-    r = compare_tensors(op, hf_op_out[op], vllm_op_out[op])
+    r = compare_tensors(op, hf[op], vllm[op])
     print(r.verdict())
 ```
+嫌疑路径：norm 发散 → RMSNorm/LayerNorm 精度；attn 发散 → flash_attn vs eager；mlp 发散 → 融合 GEMM 精度。
 
-典型情形：A-D 全 cos≈1.0，**E (mlp) 唯一发散** → 矛头指向 MoE。以实际对比为准。
+> 以实际对比为准，不要预判。
 
 ## 单算子对比（阶段 6）
 
-锁定嫌疑算子后，隔离变量做单算子对比：
+锁定嫌疑算子后，隔离变量做对照实验：
 
-### fused_gate vs python grouped_topk
+### 通用方法
+
+- **fused kernel vs native**：同一输入对比 vLLM 融合 kernel 与纯 PyTorch 回退路径
+- **环境变量回退**：设对应开关端到端验证（如 `VLLM_ATTENTION_BACKEND=TORCH_SDPA`）
+- 均用 `lib.tensor_compare` 对比输出
+
+### MoE 专属
 ```python
 # 同一组 router_logits + bias，分别喂两个算子
 from vllm.model_executor.layers.fused_moe.cpu_fused_moe import grouped_topk as py_topk
@@ -95,7 +105,7 @@ experts.forward_native(...) # 纯 PyTorch
 # compare_tensors 对比，若一致 → fused kernel 无精度问题
 ```
 
-参考脚本：`examples/compare_layers.py`（`--only router` + `--env` 做有/无 fused_gate 对照）。
+参考脚本：`examples/compare_layers.py`（`--op router` + `--env` 做有/无 fused_gate 对照）。
 
 ## 误差判定速查
 

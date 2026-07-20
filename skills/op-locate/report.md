@@ -103,7 +103,7 @@ reports/<model>_<date>/
 **不自动回写**。报告完成后，提示用户：
 
 > 定位完成。若结论已确认（confidence=high），建议人工 review 后将根因追加到
-> `knowledge/moe_known_issues.md`，附"验证来源"（本报告路径 + 日期）。
+> `knowledge/precision_known_issues.md`，附"验证来源"（本报告路径 + 日期）。
 > 回写时按 `knowledge/README.md` 的条目格式。
 
 回写原因：避免错误结论污染知识库（`INVESTIGATION.md` 根因写错的前车之鉴）。

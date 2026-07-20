@@ -9,7 +9,7 @@
 |---|---|---|
 | `arch_index.md` | 架构 → vLLM 代码路径映射（按 model_type / architectures） | 拿到 ModelProfile 后第一查 |
 | `vllm_forward_paths.md` | vLLM 前向核心路径速查（按模型族：MoE / Dense / Attention） | 规划 hook 点时查 |
-| `moe_known_issues.md` | MoE 已知坑（fused_gate / grouped_topk / aiter / lightop） | MoE 模型必查；定位到 router 后深查 |
+| `precision_known_issues.md` | MoE 已知坑（fused_gate / grouped_topk / aiter / lightop） | MoE 模型必查；定位到 router 后深查 |
 | `model_config_issues.md` | 模型 config 缺失字段坑（如 BailingMoeV2 MTP 字段） | from_pretrained 报 AttributeError 时查 |
 | `hook_pitfalls.md` | hook 抓取口径陷阱（in-place / collective_rpc / CustomOp） | 写 hook 前必查 |
 | `platforms/hygon_dcu.md` | Hygon DCU 家族（gfx936/gfx938）平台特性与坑 | DCU 环境必查 |
